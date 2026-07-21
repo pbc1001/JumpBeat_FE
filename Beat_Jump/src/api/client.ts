@@ -169,4 +169,15 @@ export const songApi = {
     method: 'POST',
     body: JSON.stringify(request),
   }),
+  getDraft: (songId: string) => apiRequest<SongDetail>(`/songs/drafts/${songId}`),
+  saveSync: (songId: string, request: {
+    durationMs: number;
+    lyrics: Array<{ id: string; startTimeMs: number }>;
+  }) => apiRequest<SongDetail>(`/songs/drafts/${songId}/sync`, {
+    method: 'PATCH',
+    body: JSON.stringify(request),
+  }),
+  publish: (songId: string) => apiRequest<SongDetail>(`/songs/drafts/${songId}/publish`, {
+    method: 'POST',
+  }),
 };

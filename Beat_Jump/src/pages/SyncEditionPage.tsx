@@ -1,576 +1,279 @@
-// 1. Import 문
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import styled from '@emotion/styled';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import LogoSvg from '../assets/Logo.svg';
+import { ApiError, songApi } from '../api/client';
+import type { SongDetail } from '../api/types';
 
-// 2. 컴포넌트 로직
+type YouTubePlayer = {
+  getCurrentTime: () => number;
+  getDuration: () => number;
+  seekTo: (seconds: number, allowSeekAhead: boolean) => void;
+  destroy: () => void;
+};
+
+type YouTubeApi = {
+  Player: new (element: HTMLElement, options: {
+    videoId: string;
+    playerVars?: Record<string, number>;
+    events: { onReady: (event: { target: YouTubePlayer }) => void };
+  }) => YouTubePlayer;
+};
+
+declare global {
+  interface Window {
+    YT?: YouTubeApi;
+    onYouTubeIframeAPIReady?: () => void;
+  }
+}
+
+let youTubeApiPromise: Promise<YouTubeApi> | null = null;
+const loadYouTubeApi = () => {
+  if (window.YT?.Player) return Promise.resolve(window.YT);
+  if (!youTubeApiPromise) {
+    youTubeApiPromise = new Promise((resolve) => {
+      const previousCallback = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = () => {
+        previousCallback?.();
+        if (window.YT) resolve(window.YT);
+      };
+      if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
+        const script = document.createElement('script');
+        script.src = 'https://www.youtube.com/iframe_api';
+        document.head.appendChild(script);
+      }
+    });
+  }
+  return youTubeApiPromise;
+};
+
+const formatTime = (milliseconds: number | null) => {
+  if (milliseconds === null) return '--:--.---';
+  const minutes = Math.floor(milliseconds / 60000);
+  const seconds = Math.floor((milliseconds % 60000) / 1000);
+  const millis = milliseconds % 1000;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
+};
+
 const SyncEditorPage = () => {
-  const [selectedTimelineId, setSelectedTimelineId] = useState<number>(2);
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const songId = searchParams.get('songId');
+  const playerHostRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<YouTubePlayer | null>(null);
+  const [song, setSong] = useState<SongDetail | null>(null);
+  const [times, setTimes] = useState<Record<string, number | null>>({});
+  const [durationMs, setDurationMs] = useState(0);
+  const [isLoading, setIsLoading] = useState(Boolean(songId));
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [savedMessage, setSavedMessage] = useState('');
 
-  const timelineItems = [
-    { id: 1, time: '00:42.1', tag: '인트로', text: '악기 빌드업 구간' },
-    { id: 2, time: '01:24.4', tag: '주멜로', subTag: '보컬', text: '우리 사이 세상 소릴 지우는', selected: true },
-    { id: 3, time: '01:26.2', tag: '주멜로', text: 'Heart beat, I cant take it any more' },
-    { id: 4, time: '01:29.8', tag: '주멜로', text: 'You, You remind me' },
-    { id: 5, time: '01:33.1', tag: '주멜로가뭔데', text: '한여름밤의 꿈속같이' },
-    { id: 6, time: '01:36.5', tag: '씹덕아;', text: 'You, You remind me' },
-    { id: 7, time: '--:--.-', tag: '', text: "And the city's pulse is beating fast...", pending: true },
-  ];
+  useEffect(() => {
+    if (!songId) {
+      return;
+    }
+    let active = true;
+    songApi.getDraft(songId)
+      .then((draft) => {
+        if (!active) return;
+        setSong(draft);
+        setDurationMs(draft.durationMs ?? 0);
+        setTimes(Object.fromEntries(draft.lyrics.map((line) => [line.id, line.startTimeMs])));
+      })
+      .catch((requestError) => {
+        if (active) setError(requestError instanceof ApiError ? requestError.message : '곡 초안을 불러오지 못했습니다.');
+      })
+      .finally(() => { if (active) setIsLoading(false); });
+    return () => { active = false; };
+  }, [songId]);
+
+  useEffect(() => {
+    if (!song || !playerHostRef.current) return;
+    let active = true;
+    let createdPlayer: YouTubePlayer | null = null;
+    loadYouTubeApi().then((YT) => {
+      if (!active || !playerHostRef.current) return;
+      createdPlayer = new YT.Player(playerHostRef.current, {
+        videoId: song.youtubeVideoId,
+        playerVars: { controls: 1, rel: 0 },
+        events: {
+          onReady: ({ target }) => {
+            playerRef.current = target;
+            const videoDuration = Math.round(target.getDuration() * 1000);
+            if (videoDuration > 0) setDurationMs(videoDuration);
+          },
+        },
+      });
+    });
+    return () => {
+      active = false;
+      playerRef.current = null;
+      createdPlayer?.destroy();
+    };
+  }, [song]);
+
+  const setCurrentTime = (lineId: string) => {
+    const player = playerRef.current;
+    if (!player) {
+      setError('영상 플레이어가 준비될 때까지 잠시 기다려 주세요.');
+      return;
+    }
+    setError('');
+    setSavedMessage('');
+    setTimes((current) => ({ ...current, [lineId]: Math.round(player.getCurrentTime() * 1000) }));
+  };
+
+  const validateTimeline = () => {
+    if (!song || durationMs <= 0) return '영상이 준비되지 않았습니다.';
+    const orderedTimes = song.lyrics.map((line) => times[line.id]);
+    if (orderedTimes.some((time) => time === null || time === undefined)) return '모든 가사 줄의 시작 시간을 지정해 주세요.';
+    const completeTimes = orderedTimes as number[];
+    if (completeTimes.some((time) => time < 0 || time >= durationMs)) return '시작 시간은 영상 길이 안에 있어야 합니다.';
+    if (completeTimes.some((time, index) => index > 0 && completeTimes[index - 1] >= time)) return '가사 시작 시간은 위에서 아래로 갈수록 커야 합니다.';
+    return null;
+  };
+
+  const saveTimeline = async () => {
+    if (!songId || !song) return false;
+    const validationError = validateTimeline();
+    if (validationError) {
+      setError(validationError);
+      return false;
+    }
+    setIsSaving(true);
+    setError('');
+    setSavedMessage('');
+    try {
+      const updated = await songApi.saveSync(songId, {
+        durationMs,
+        lyrics: song.lyrics.map((line) => ({ id: line.id, startTimeMs: times[line.id] as number })),
+      });
+      setSong(updated);
+      setSavedMessage('싱크를 저장했습니다.');
+      return true;
+    } catch (requestError) {
+      setError(requestError instanceof ApiError ? requestError.message : '싱크를 저장하지 못했습니다.');
+      return false;
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const publishSong = async () => {
+    if (!songId || !(await saveTimeline())) return;
+    setIsSaving(true);
+    try {
+      await songApi.publish(songId);
+      navigate('/selectsong', { replace: true });
+    } catch (requestError) {
+      setError(requestError instanceof ApiError ? requestError.message : '곡을 공개하지 못했습니다.');
+      setIsSaving(false);
+    }
+  };
+
+  if (isLoading) return <Centered role="status">곡 정보를 불러오는 중입니다...</Centered>;
+  if (!song) return <Centered><p>{error || '곡 정보가 없습니다. 곡 등록부터 다시 진행해 주세요.'}</p><button type="button" onClick={() => navigate('/registersong')}>곡 등록으로 돌아가기</button></Centered>;
 
   return (
     <PageWrapper>
-      {/* 상단 네비게이션 헤더 */}
       <Header>
-        <HeaderContainer>
-          <LogoImage src={LogoSvg} alt="최애의 타자" />
-          <NavGroup>
-            <NavLink href="#play">플레이</NavLink>
-            <NavLink href="#create" active>제작하기</NavLink>
-            <NavLink href="#leaderboard">리더보드</NavLink>
-          </NavGroup>
-          <HeaderAuth>
-            <LoginButton href="#login">로그인</LoginButton>
-            <StartHeaderButton >시작하기</StartHeaderButton>
-          </HeaderAuth>
-        </HeaderContainer>
+        <LogoButton type="button" onClick={() => navigate('/main')}><LogoImage src={LogoSvg} alt="최애의 타자" /></LogoButton>
+        <HeaderTitle>수동 싱크 편집기</HeaderTitle>
+        <HeaderButton type="button" onClick={() => navigate('/selectsong')}>나중에 계속하기</HeaderButton>
       </Header>
 
-      {/* 메인 에디터 영역 */}
       <EditorLayout>
-        {/* 좌측: 비디오 플레이어 & AI 분석 카드 */}
         <LeftPane>
-          <PaneHeader>
-            <div>
-              <TitleGroup>
-                <Title>AI 싱크 에디터</Title>
-                <AiBadge>✦ AI 지원 모드</AiBadge>
-              </TitleGroup>
-              <Subtitle>동기화 중: Midnight City — M83</Subtitle>
-            </div>
-          </PaneHeader>
-
-          {/* 유튜브 비디오 플레이어 임베드 */}
-          <VideoContainer>
-            <StyledIframe
-              src="https://www.youtube.com/embed/TaiAXFeSb3g?autoplay=0&controls=1"
-              title="YouTube video player"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-            />
-          </VideoContainer>
-
-          {/* AI 분석 결과 알림 카드 */}
-          <AiNoticeCard>
-            <AiIconWrapper>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-                <line x1="8" y1="21" x2="16" y2="21" />
-                <line x1="12" y1="17" x2="12" y2="21" />
-              </svg>
-            </AiIconWrapper>
-            <AiNoticeContent>
-              <AiNoticeTitle>AI 신뢰도 점수: 98%</AiNoticeTitle>
-              <AiNoticeText>
-                비트 감지 결과 01:45 지점에서 높은 리듬 밀도가 확인되었습니다. 빠른 템포 전환을 위해 더블 탭 싱크 마커 추가를 고려해보세요.
-              </AiNoticeText>
-            </AiNoticeContent>
-            <ReanalyzeButton>재분석하기</ReanalyzeButton>
-          </AiNoticeCard>
+          <Title>{song.title}</Title>
+          <Subtitle>{song.artist}</Subtitle>
+          <VideoContainer><PlayerHost ref={playerHostRef} /></VideoContainer>
+          <Guide>
+            영상을 재생한 뒤 가사가 시작되는 순간 해당 줄의 <strong>현재 시간 기록</strong>을 누르세요.
+            잘못 기록한 줄은 다시 누르면 덮어쓸 수 있습니다.
+          </Guide>
+          <Duration>영상 길이: {durationMs > 0 ? formatTime(durationMs) : '확인 중...'}</Duration>
         </LeftPane>
 
-        {/* 우측: 싱크 타임라인 목록 & 하단 액션 버튼 */}
         <RightPane>
           <TimelineHeader>
-            <TimelineTitle>싱크 타임라인</TimelineTitle>
-            <HeaderActionButtons>
-              <IconButton title="추가">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </IconButton>
-              <IconButton title="필터">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="4" y1="21" x2="4" y2="14" />
-                  <line x1="4" y1="10" x2="4" y2="3" />
-                  <line x1="12" y1="21" x2="12" y2="12" />
-                  <line x1="12" y1="8" x2="12" y2="3" />
-                  <line x1="20" y1="21" x2="20" y2="16" />
-                  <line x1="20" y1="12" x2="20" y2="3" />
-                  <line x1="1" y1="14" x2="7" y2="14" />
-                  <line x1="9" y1="8" x2="15" y2="8" />
-                  <line x1="17" y1="16" x2="23" y2="16" />
-                </svg>
-              </IconButton>
-            </HeaderActionButtons>
+            <div><TimelineTitle>가사 타임라인</TimelineTitle><TimelineCount>{song.lyrics.length}줄</TimelineCount></div>
+            <SaveButton type="button" disabled={isSaving} onClick={saveTimeline}>임시 저장</SaveButton>
           </TimelineHeader>
 
-          {/* 타임라인 리스트 */}
+          {error && <ErrorMessage role="alert">{error}</ErrorMessage>}
+          {savedMessage && <SuccessMessage role="status">{savedMessage}</SuccessMessage>}
+
           <TimelineList>
-            {timelineItems.map((item) => {
-              const isSelected = selectedTimelineId === item.id;
+            {song.lyrics.map((line, index) => {
+              const time = times[line.id] ?? null;
               return (
-                <TimelineItem
-                  key={item.id}
-                  isSelected={isSelected}
-                  isPending={item.pending}
-                  onClick={() => setSelectedTimelineId(item.id)}
-                >
-                  <TimeBadge isSelected={isSelected}>{item.time}</TimeBadge>
-                  <ItemContent>
-                    <TagRow>
-                      {item.tag && <Tag>{item.tag}</Tag>}
-                      {item.subTag && <SubTag>{item.subTag}</SubTag>}
-                    </TagRow>
-                    <ItemText isSelected={isSelected}>{item.text}</ItemText>
-                  </ItemContent>
-                  {isSelected && (
-                    <CheckBadge>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                    </CheckBadge>
-                  )}
+                <TimelineItem key={line.id} $synced={time !== null}>
+                  <LineNumber>{index + 1}</LineNumber>
+                  <LineContent>
+                    <LyricText>{line.text}</LyricText>
+                    <TimeControls>
+                      <TimeButton type="button" disabled={time === null} onClick={() => time !== null && playerRef.current?.seekTo(time / 1000, true)}>{formatTime(time)}</TimeButton>
+                      <SecondsInput
+                        aria-label={`${index + 1}번째 가사 시작 초`}
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        placeholder="초"
+                        value={time === null ? '' : time / 1000}
+                        onChange={(event) => setTimes((current) => ({ ...current, [line.id]: event.target.value === '' ? null : Math.round(Number(event.target.value) * 1000) }))}
+                      />
+                      <RecordButton type="button" onClick={() => setCurrentTime(line.id)}>현재 시간 기록</RecordButton>
+                    </TimeControls>
+                  </LineContent>
                 </TimelineItem>
               );
             })}
           </TimelineList>
 
-          {/* 하단 저장/게시 버튼 영역 */}
-          <TimelineFooter>
-            <DraftButton>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                <polyline points="17 21 17 13 7 13 7 21" />
-                <polyline points="7 3 7 8 15 8" />
-              </svg>
-              임시 저장
-            </DraftButton>
-            <PublishButton>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 2v8M12 18v4M4.93 10.93l1.41 1.41M17.66 11.66l1.41 1.41" />
-              </svg>
-              싱크 게시
-            </PublishButton>
-          </TimelineFooter>
+          <BottomActions>
+            <SecondaryButton type="button" onClick={() => navigate('/registersong')}>곡 정보로 돌아가기</SecondaryButton>
+            <PublishButton type="button" disabled={isSaving} onClick={publishSong}>{isSaving ? '처리 중...' : '저장하고 공개하기'}</PublishButton>
+          </BottomActions>
         </RightPane>
       </EditorLayout>
-
-      {/* 바닥글 상태 표시줄 */}
-      <StatusBar>
-        <StatusItem>● 자동 저장 활성화됨</StatusItem>
-        <StatusItem>모드: 고급 정밀 편집</StatusItem>
-        <ShortcutGroup>
-          <KeyBadge>SPACE</KeyBadge> 재생 / 일시정지
-          <KeyBadge style={{ marginLeft: '12px' }}>S</KeyBadge> 싱크 전용
-        </ShortcutGroup>
-      </StatusBar>
     </PageWrapper>
   );
 };
 
-// 3. Emotion Styled 정의
-const PageWrapper = styled.div`
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  background-color: #f8fafc;
-`;
+const PageWrapper = styled.div`min-height: 100vh; background: ${({ theme }) => theme.colors.canvas};`;
+const Header = styled.header`height: 64px; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid ${({ theme }) => theme.colors.dividerSoft};`;
+const LogoButton = styled.button`display: flex;`;
+const LogoImage = styled.img`width: 100px;`;
+const HeaderTitle = styled.span`font-size: 14px; font-weight: 700;`;
+const HeaderButton = styled.button`font-size: 13px; color: ${({ theme }) => theme.colors.mute};`;
+const EditorLayout = styled.main`min-height: calc(100vh - 64px); display: grid; grid-template-columns: minmax(360px, 46%) 1fr; @media (max-width: 900px) { grid-template-columns: 1fr; }`;
+const LeftPane = styled.section`padding: 42px; background: #f8fafc; border-right: 1px solid ${({ theme }) => theme.colors.dividerSoft}; @media (max-width: 600px) { padding: 24px; }`;
+const Title = styled.h1`font-size: 30px; font-weight: 800;`;
+const Subtitle = styled.p`margin: 5px 0 24px; color: ${({ theme }) => theme.colors.mute};`;
+const VideoContainer = styled.div`aspect-ratio: 16 / 9; overflow: hidden; border-radius: 14px; background: #0f172a; box-shadow: 0 14px 34px rgba(0,0,0,.14);`;
+const PlayerHost = styled.div`width: 100%; height: 100%; iframe { width: 100%; height: 100%; }`;
+const Guide = styled.p`margin-top: 22px; padding: 15px; border-radius: 10px; background: #eff6ff; color: #334155; font-size: 13px; line-height: 1.65;`;
+const Duration = styled.p`margin-top: 12px; font-size: 12px; color: ${({ theme }) => theme.colors.mute};`;
+const RightPane = styled.section`padding: 34px; min-width: 0; @media (max-width: 600px) { padding: 22px; }`;
+const TimelineHeader = styled.div`display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;`;
+const TimelineTitle = styled.h2`font-size: 21px; font-weight: 800;`;
+const TimelineCount = styled.p`font-size: 12px; color: ${({ theme }) => theme.colors.ash}; margin-top: 3px;`;
+const SaveButton = styled.button`padding: 9px 15px; border: 1px solid ${({ theme }) => theme.colors.hairlineStrong}; border-radius: ${({ theme }) => theme.radii.full}; font-size: 12px; font-weight: 700;`;
+const ErrorMessage = styled.div`padding: 11px 13px; margin-bottom: 14px; border-radius: 8px; color: #b91c1c; background: #fef2f2; font-size: 12px;`;
+const SuccessMessage = styled.div`padding: 11px 13px; margin-bottom: 14px; border-radius: 8px; color: #15803d; background: #f0fdf4; font-size: 12px;`;
+const TimelineList = styled.div`display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 230px); overflow: auto; padding-right: 4px;`;
+const TimelineItem = styled.div<{ $synced: boolean }>`display: flex; gap: 12px; padding: 14px; border: 1px solid ${({ $synced }) => $synced ? '#bfdbfe' : '#e2e8f0'}; border-radius: 11px; background: ${({ $synced }) => $synced ? '#f8fbff' : '#fff'};`;
+const LineNumber = styled.span`width: 24px; height: 24px; display: grid; place-items: center; flex-shrink: 0; border-radius: 50%; background: #f1f5f9; color: #64748b; font-size: 11px; font-weight: 700;`;
+const LineContent = styled.div`flex: 1; min-width: 0;`;
+const LyricText = styled.p`font-size: 14px; line-height: 1.45; word-break: break-word;`;
+const TimeControls = styled.div`display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 10px;`;
+const TimeButton = styled.button`min-width: 78px; text-align: left; font-family: monospace; font-size: 12px; color: ${({ theme }) => theme.colors.primary}; &:disabled { color: #94a3b8; }`;
+const SecondsInput = styled.input`width: 76px; height: 30px; padding: 0 7px; border: 1px solid #dbe2ea; border-radius: 6px; font-size: 12px;`;
+const RecordButton = styled.button`padding: 7px 10px; border-radius: 7px; background: ${({ theme }) => theme.colors.primary}; color: white; font-size: 11px; font-weight: 700;`;
+const BottomActions = styled.div`display: flex; justify-content: space-between; gap: 12px; margin-top: 22px;`;
+const SecondaryButton = styled.button`padding: 11px 14px; color: ${({ theme }) => theme.colors.mute}; font-size: 13px;`;
+const PublishButton = styled.button`padding: 12px 22px; border-radius: ${({ theme }) => theme.radii.full}; background: ${({ theme }) => theme.colors.primary}; color: white; font-size: 13px; font-weight: 800; &:disabled { opacity: .55; }`;
+const Centered = styled.main`min-height: 100vh; display: grid; place-content: center; gap: 16px; text-align: center; color: #64748b; button { color: #0066ff; }`;
 
-const Header = styled.header`
-  width: 100%;
-  height: 60px;
-  border-bottom: 1px solid ${({ theme }) => theme.colors.dividerSoft};
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  background-color: #ffffff;
-  position: sticky;
-  top: 0;
-  z-index: 100;
-`;
-
-const HeaderContainer = styled.div`
-  width: 100%;
-  max-width: 1400px;
-  padding: 0 24px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-`;
-
-const LogoImage = styled.img`
-  height: 24px;
-`;
-
-const NavGroup = styled.nav`
-  display: flex;
-  gap: 24px;
-`;
-
-const NavLink = styled.a<{ active?: boolean }>`
-  font-size: 14px;
-  font-weight: ${({ active }) => (active ? '700' : '500')};
-  color: ${({ active, theme }) => (active ? theme.colors.primary : theme.colors.charcoal)};
-  position: relative;
-
-  ${({ active, theme }) =>
-    active &&
-    `
-    &::after {
-      content: '';
-      position: absolute;
-      bottom: -18px;
-      left: 0;
-      width: 100%;
-      height: 2px;
-      background-color: ${theme.colors.primary};
-    }
-  `}
-`;
-
-const HeaderAuth = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 16px;
-`;
-
-const LoginButton = styled.a`
-  font-size: 14px;
-  font-weight: 500;
-  color: ${({ theme }) => theme.colors.charcoal};
-`;
-
-const StartHeaderButton = styled.button`
-  padding: 8px 16px;
-  background-color: ${({ theme }) => theme.colors.primary};
-  color: ${({ theme }) => theme.colors.primaryOn};
-  border-radius: ${({ theme }) => theme.radii.full};
-  font-size: 13px;
-  font-weight: 600;
-`;
-
-const EditorLayout = styled.div`
-  flex: 1;
-  display: flex;
-  width: 100%;
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 24px;
-  gap: 24px;
-
-  @media (max-width: 1024px) {
-    flex-direction: column;
-  }
-`;
-
-const LeftPane = styled.div`
-  flex: 1.4;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-`;
-
-const PaneHeader = styled.div`
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-`;
-
-const TitleGroup = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 12px;
-`;
-
-const Title = styled.h1`
-  font-size: 28px;
-  font-weight: 800;
-  color: ${({ theme }) => theme.colors.ink};
-`;
-
-const AiBadge = styled.span`
-  padding: 4px 10px;
-  background-color: #e0edff;
-  color: ${({ theme }) => theme.colors.primary};
-  border-radius: ${({ theme }) => theme.radii.full};
-  font-size: 12px;
-  font-weight: 700;
-`;
-
-const Subtitle = styled.p`
-  font-size: 14px;
-  color: ${({ theme }) => theme.colors.mute};
-  margin-top: 4px;
-`;
-
-const VideoContainer = styled.div`
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  background-color: #000000;
-  border-radius: 16px;
-  overflow: hidden;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
-`;
-
-const StyledIframe = styled.iframe`
-  width: 100%;
-  height: 100%;
-  border: none;
-`;
-
-const AiNoticeCard = styled.div`
-  background-color: #f0f6ff;
-  border: 1px solid #d0e2ff;
-  border-radius: 14px;
-  padding: 18px 20px;
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
-`;
-
-const AiIconWrapper = styled.div`
-  width: 36px;
-  height: 36px;
-  background-color: #dbeafe;
-  color: ${({ theme }) => theme.colors.primary};
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-`;
-
-const AiNoticeContent = styled.div`
-  flex: 1;
-`;
-
-const AiNoticeTitle = styled.h4`
-  font-size: 14px;
-  font-weight: 700;
-  color: ${({ theme }) => theme.colors.ink};
-  margin-bottom: 4px;
-`;
-
-const AiNoticeText = styled.p`
-  font-size: 12px;
-  color: ${({ theme }) => theme.colors.charcoal};
-  line-height: 1.5;
-`;
-
-const ReanalyzeButton = styled.button`
-  padding: 8px 14px;
-  background-color: #ffffff;
-  border: 1px solid #bfdbfe;
-  color: ${({ theme }) => theme.colors.primary};
-  border-radius: ${({ theme }) => theme.radii.md};
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-
-  &:hover {
-    background-color: #eff6ff;
-  }
-`;
-
-const RightPane = styled.div`
-  flex: 1;
-  background-color: #ffffff;
-  border-radius: 20px;
-  border: 1px solid ${({ theme }) => theme.colors.dividerSoft};
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
-`;
-
-const TimelineHeader = styled.div`
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-`;
-
-const TimelineTitle = styled.h2`
-  font-size: 16px;
-  font-weight: 700;
-  color: ${({ theme }) => theme.colors.ink};
-`;
-
-const HeaderActionButtons = styled.div`
-  display: flex;
-  gap: 8px;
-`;
-
-const IconButton = styled.button`
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  border: 1px solid ${({ theme }) => theme.colors.hairlineStrong};
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: ${({ theme }) => theme.colors.charcoal};
-
-  &:hover {
-    background-color: #f1f5f9;
-  }
-`;
-
-const TimelineList = styled.div`
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  overflow-y: auto;
-  max-height: 480px;
-  padding-right: 4px;
-`;
-
-const TimelineItem = styled.div<{ isSelected?: boolean; isPending?: boolean }>`
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 14px 16px;
-  border-radius: 12px;
-  background-color: ${({ isSelected }) => (isSelected ? '#f0f6ff' : '#ffffff')};
-  border: 1.5px solid ${({ isSelected, theme }) => (isSelected ? theme.colors.primary : '#f1f5f9')};
-  opacity: ${({ isPending }) => (isPending ? 0.5 : 1)};
-  cursor: pointer;
-  transition: all 0.15s ease;
-
-  &:hover {
-    border-color: ${({ isSelected, theme }) => (isSelected ? theme.colors.primary : theme.colors.hairlineStrong)};
-  }
-`;
-
-const TimeBadge = styled.span<{ isSelected?: boolean }>`
-  padding: 4px 10px;
-  border-radius: ${({ theme }) => theme.radii.md};
-  font-size: 12px;
-  font-weight: 700;
-  background-color: ${({ isSelected }) => (isSelected ? '#0066ff' : '#e2e8f0')};
-  color: ${({ isSelected }) => (isSelected ? '#ffffff' : '#475569')};
-`;
-
-const ItemContent = styled.div`
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-`;
-
-const TagRow = styled.div`
-  display: flex;
-  gap: 6px;
-`;
-
-const Tag = styled.span`
-  font-size: 10px;
-  font-weight: 800;
-  padding: 2px 6px;
-  background-color: #0f172a;
-  color: #ffffff;
-  border-radius: 4px;
-`;
-
-const SubTag = styled.span`
-  font-size: 10px;
-  font-weight: 600;
-  padding: 2px 6px;
-  background-color: #e2e8f0;
-  color: #475569;
-  border-radius: 4px;
-`;
-
-const ItemText = styled.p<{ isSelected?: boolean }>`
-  font-size: 14px;
-  font-weight: ${({ isSelected }) => (isSelected ? '700' : '500')};
-  color: ${({ isSelected, theme }) => (isSelected ? theme.colors.ink : theme.colors.charcoal)};
-`;
-
-const CheckBadge = styled.div`
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background-color: ${({ theme }) => theme.colors.primary};
-  color: #ffffff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-`;
-
-const TimelineFooter = styled.div`
-  display: flex;
-  gap: 12px;
-  margin-top: 24px;
-  padding-top: 16px;
-  border-top: 1px solid ${({ theme }) => theme.colors.dividerSoft};
-`;
-
-const DraftButton = styled.button`
-  flex: 1;
-  height: 44px;
-  background-color: #ffffff;
-  border: 1px solid ${({ theme }) => theme.colors.hairlineStrong};
-  border-radius: ${({ theme }) => theme.radii.md};
-  font-size: 13px;
-  font-weight: 600;
-  color: ${({ theme }) => theme.colors.ink};
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-`;
-
-const PublishButton = styled.button`
-  flex: 1.5;
-  height: 44px;
-  background-color: ${({ theme }) => theme.colors.primary};
-  border: none;
-  border-radius: ${({ theme }) => theme.radii.md};
-  font-size: 13px;
-  font-weight: 600;
-  color: #ffffff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-`;
-
-const StatusBar = styled.div`
-  width: 100%;
-  height: 36px;
-  background-color: #ffffff;
-  border-top: 1px solid ${({ theme }) => theme.colors.dividerSoft};
-  padding: 0 24px;
-  display: flex;
-  align-items: center;
-  font-size: 11px;
-  color: ${({ theme }) => theme.colors.ash};
-`;
-
-const StatusItem = styled.span`
-  margin-right: 24px;
-`;
-
-const ShortcutGroup = styled.div`
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-`;
-
-const KeyBadge = styled.kbd`
-  padding: 2px 6px;
-  background-color: #f1f5f9;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
-  font-family: monospace;
-  font-size: 10px;
-  font-weight: 700;
-  color: #334155;
-`;
-
-// 4. Export Default
 export default SyncEditorPage;
