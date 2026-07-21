@@ -1,548 +1,221 @@
-// 1. Import 문
-import React, { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import styled from '@emotion/styled';
+import { useNavigate } from 'react-router-dom';
 import LogoSvg from '../assets/Logo.svg';
+import { ApiError, songApi } from '../api/client';
+import type { DuplicateSong, SongDifficulty, SongLanguage } from '../api/types';
 
-// 2. 컴포넌트 로직
+const getYouTubeVideoId = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === 'youtu.be') return parsed.pathname.split('/')[1] || null;
+    if (parsed.hostname.endsWith('youtube.com')) {
+      return parsed.searchParams.get('v') ?? parsed.pathname.match(/^\/(?:embed|shorts)\/([^/]+)/)?.[1] ?? null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+};
+
 const SongRegisterPage = () => {
+  const navigate = useNavigate();
   const [youtubeUrl, setYoutubeUrl] = useState('');
-  const [songTitle, setSongTitle] = useState('');
+  const [title, setTitle] = useState('');
   const [artist, setArtist] = useState('');
-  const [lyrics, setLyrics] = useState('');
+  const [lyricsText, setLyricsText] = useState('');
+  const [language, setLanguage] = useState<SongLanguage>('KO');
+  const [difficulty, setDifficulty] = useState<SongDifficulty>('NORMAL');
+  const [duplicates, setDuplicates] = useState<DuplicateSong[]>([]);
+  const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const videoId = getYouTubeVideoId(youtubeUrl);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    // 싱크 에디터 이동 로직 처리
+  const createDraft = async (confirmedDuplicate: boolean) => {
+    setIsSubmitting(true);
+    setError('');
+    try {
+      const draft = await songApi.createDraft({
+        title: title.trim(),
+        artist: artist.trim(),
+        youtubeUrl: youtubeUrl.trim(),
+        language,
+        difficulty,
+        lyricsText: lyricsText.trim(),
+        confirmedDuplicate,
+      });
+      navigate(`/syncedit?songId=${draft.id}`);
+    } catch (requestError) {
+      setError(requestError instanceof ApiError ? requestError.message : '곡 초안을 만들지 못했습니다.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!videoId) {
+      setError('올바른 YouTube 영상 URL을 입력해 주세요.');
+      return;
+    }
+    setIsSubmitting(true);
+    setError('');
+    try {
+      const result = await songApi.getDuplicates(title.trim(), artist.trim());
+      if (result.hasDuplicates) {
+        setDuplicates(result.items);
+        setIsDuplicateModalOpen(true);
+        setIsSubmitting(false);
+        return;
+      }
+      await createDraft(false);
+    } catch (requestError) {
+      setError(requestError instanceof ApiError ? requestError.message : '중복 곡을 확인하지 못했습니다.');
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <PageWrapper>
-      {/* 상단 네비게이션 헤더 */}
       <Header>
         <HeaderContainer>
-          <LogoImage src={LogoSvg} alt="최애의 타자" />
+          <LogoButton type="button" onClick={() => navigate('/main')}><LogoImage src={LogoSvg} alt="최애의 타자" /></LogoButton>
           <NavGroup>
-            <NavLink href="#play">플레이</NavLink>
-            <NavLink href="#create" active>제작하기</NavLink>
-            <NavLink href="#leaderboard">리더보드</NavLink>
+            <NavButton type="button" onClick={() => navigate('/selectsong')}>곡 목록</NavButton>
+            <NavButton type="button" $active>곡 만들기</NavButton>
           </NavGroup>
-          <HeaderAuth>
-            <LoginButton href="#login">로그인</LoginButton>
-            <StartHeaderButton>시작하기</StartHeaderButton>
-          </HeaderAuth>
+          <BackToList type="button" onClick={() => navigate('/selectsong')}>목록으로</BackToList>
         </HeaderContainer>
       </Header>
 
       <MainContainer>
         <FormSection>
-          {/* 브레드크럼 */}
-          <Breadcrumb>
-            <span>🎵 크리에이터 스튜디오</span>
-            <span>›</span>
-            <span className="active">새 곡</span>
-          </Breadcrumb>
-
-          {/* 메인 타이틀 */}
           <PageTitle>새 곡 등록</PageTitle>
-          <PageSubtitle>
-            좋아하는 리듬을 키보드로 가져오세요. 동기화 과정을 시작하기 위해 메타데이터와 가사를 입력해주세요.
-          </PageSubtitle>
-
-          {/* 곡 등록 폼 */}
+          <PageSubtitle>영상 정보와 가사를 입력하면 줄별 시작 시간을 설정할 수 있는 싱크 편집기로 이동합니다.</PageSubtitle>
           <Form onSubmit={handleSubmit}>
-            {/* YouTube URL */}
             <FormGroup>
-              <Label>YouTube URL</Label>
-              <InputWrapper>
-                <InputIcon>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                  </svg>
-                </InputIcon>
-                <Input
-                  type="text"
-                  placeholder="https://www.youtube.com/watch?v=..."
-                  value={youtubeUrl}
-                  onChange={(e) => setYoutubeUrl(e.target.value)}
-                />
-              </InputWrapper>
-              <HelperText>YouTube 동영상의 원본 링크를 입력해 주세요.</HelperText>
+              <Label htmlFor="youtube-url">YouTube URL</Label>
+              <Input id="youtube-url" type="url" required placeholder="https://www.youtube.com/watch?v=..." value={youtubeUrl} onChange={(e) => setYoutubeUrl(e.target.value)} />
+              <HelperText>일반 영상, 단축 URL, Shorts URL을 사용할 수 있습니다.</HelperText>
             </FormGroup>
 
-            {/* 곡 제목 & 아티스트 (2열 배치) */}
             <RowGrid>
               <FormGroup>
-                <Label>곡 제목</Label>
-                <Input
-                  type="text"
-                  placeholder="예: Moonlight Sonata"
-                  value={songTitle}
-                  onChange={(e) => setSongTitle(e.target.value)}
-                />
+                <Label htmlFor="song-title">곡 제목</Label>
+                <Input id="song-title" required maxLength={150} placeholder="곡 제목" value={title} onChange={(e) => setTitle(e.target.value)} />
               </FormGroup>
               <FormGroup>
-                <Label>아티스트</Label>
-                <Input
-                  type="text"
-                  placeholder="예: Ludwig van Beethoven"
-                  value={artist}
-                  onChange={(e) => setArtist(e.target.value)}
-                />
+                <Label htmlFor="artist">아티스트</Label>
+                <Input id="artist" required maxLength={100} placeholder="아티스트" value={artist} onChange={(e) => setArtist(e.target.value)} />
               </FormGroup>
             </RowGrid>
 
-            {/* 가사 입력 */}
+            <RowGrid>
+              <FormGroup>
+                <Label htmlFor="language">가사 언어</Label>
+                <Select id="language" value={language} onChange={(e) => setLanguage(e.target.value as SongLanguage)}>
+                  <option value="KO">한국어</option><option value="EN">영어</option><option value="JA">일본어</option><option value="OTHER">기타</option>
+                </Select>
+              </FormGroup>
+              <FormGroup>
+                <Label htmlFor="difficulty">난이도</Label>
+                <Select id="difficulty" value={difficulty} onChange={(e) => setDifficulty(e.target.value as SongDifficulty)}>
+                  <option value="EASY">쉬움</option><option value="NORMAL">보통</option><option value="HARD">어려움</option>
+                </Select>
+              </FormGroup>
+            </RowGrid>
+
             <FormGroup>
-              <Label>가사</Label>
-              <TextArea
-                placeholder="여기에 가사를 붙여넣으세요. 줄바꿈을 사용하여 구절을 구분하세요..."
-                value={lyrics}
-                onChange={(e) => setLyrics(e.target.value)}
-              />
+              <Label htmlFor="lyrics">가사</Label>
+              <TextArea id="lyrics" required maxLength={100000} placeholder="한 줄에 하나의 가사 구간을 입력해 주세요." value={lyricsText} onChange={(e) => setLyricsText(e.target.value)} />
+              <HelperText>빈 줄은 제외되며, 줄마다 하나의 타이핑 문제가 만들어집니다.</HelperText>
             </FormGroup>
 
-            {/* 정보 안내 박스 */}
-            <InfoBanner>
-              <InfoIcon>ⓘ</InfoIcon>
-              <span>등록된 곡은 모든 사용자에게 공개됩니다. 저작권 침해 요소가 없도록 주의해주세요.</span>
-            </InfoBanner>
-
-            {/* 하단 액션 버튼 */}
+            <InfoBanner>ⓘ 등록을 완료한 곡은 모든 사용자에게 공개됩니다. 사용할 권리가 있는 가사와 영상을 등록해 주세요.</InfoBanner>
+            {error && <ErrorMessage role="alert">{error}</ErrorMessage>}
             <ActionRow>
-              <BackButton type="button">← 취소 및 돌아가기</BackButton>
-              <SubmitButton type="submit">
-                싱크 작업 시작 →
-              </SubmitButton>
+              <CancelButton type="button" onClick={() => navigate('/selectsong')}>취소</CancelButton>
+              <SubmitButton type="submit" disabled={isSubmitting}>{isSubmitting ? '확인 중...' : '싱크 작업 시작 →'}</SubmitButton>
             </ActionRow>
           </Form>
         </FormSection>
 
-        {/* 우측 데이터 미리보기 안내 플로팅 카드 */}
-        <SidebarArea>
+        <PreviewAside>
           <PreviewCard>
-            <CardVideoBox>
-              <WindowControls>
-                <Dot bg="#ff5f56" />
-                <Dot bg="#ffbd2e" />
-                <Dot bg="#27c93f" />
-              </WindowControls>
-              <PlayIconCircle>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                  <polygon points="5 3 19 12 5 21 5 3" />
-                </svg>
-              </PlayIconCircle>
-            </CardVideoBox>
-
-            <CardBody>
-              <CardTitle>미디어 미리보기</CardTitle>
-              <CardDesc>
-                왼쪽 입력창에 유효한 YouTube 동영상 URL을 입력하면 동영상이 이 영역에 제대로 불러와지는지 확인해주세요.
-              </CardDesc>
-
-              <ProgressStatus>
-                <ProgressFill />
-              </ProgressStatus>
-              <StatusRow>
-                <span>URL 검증</span>
-                <StatusTag>대기 중</StatusTag>
-              </StatusRow>
-            </CardBody>
+            {videoId ? (
+              <PreviewIframe src={`https://www.youtube.com/embed/${videoId}`} title="등록할 YouTube 영상 미리보기" allowFullScreen />
+            ) : (
+              <PreviewPlaceholder>유효한 YouTube URL을 입력하면 영상이 표시됩니다.</PreviewPlaceholder>
+            )}
+            <PreviewBody>
+              <PreviewTitle>{title.trim() || '곡 제목'}</PreviewTitle>
+              <PreviewArtist>{artist.trim() || '아티스트'}</PreviewArtist>
+              <PreviewStatus $valid={Boolean(videoId)}>{videoId ? 'URL 확인됨' : 'URL 대기 중'}</PreviewStatus>
+            </PreviewBody>
           </PreviewCard>
-        </SidebarArea>
+        </PreviewAside>
       </MainContainer>
 
-      {/* 푸터 */}
-      <Footer>
-        <FooterContainer>
-          <FooterLogo src={LogoSvg} alt="최애의 타자" />
-          <FooterLinks>
-            <a href="#terms">이용약관</a>
-            <a href="#privacy">개인정보 처리방침</a>
-            <a href="#discord">디스코드</a>
-            <a href="#support">고객지원</a>
-          </FooterLinks>
-        </FooterContainer>
-      </Footer>
+      {isDuplicateModalOpen && (
+        <ModalBackdrop role="presentation">
+          <Modal role="dialog" aria-modal="true" aria-labelledby="duplicate-title">
+            <ModalTitle id="duplicate-title">같은 제목의 곡이 있어요</ModalTitle>
+            <ModalText>아래 곡과 동일한 곡인지 확인해 주세요. 다른 버전이거나 직접 등록하려는 곡이라면 계속할 수 있습니다.</ModalText>
+            <DuplicateList>
+              {duplicates.map((song) => <DuplicateItem key={song.id}><strong>{song.title}</strong><span>{song.artist}</span></DuplicateItem>)}
+            </DuplicateList>
+            <ModalActions>
+              <CancelButton type="button" onClick={() => setIsDuplicateModalOpen(false)}>내용 수정하기</CancelButton>
+              <SubmitButton type="button" disabled={isSubmitting} onClick={() => createDraft(true)}>{isSubmitting ? '등록 중...' : '그래도 등록하기'}</SubmitButton>
+            </ModalActions>
+          </Modal>
+        </ModalBackdrop>
+      )}
     </PageWrapper>
   );
 };
 
-// 3. Emotion Styled 정의
-const PageWrapper = styled.div`
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  background-color: ${({ theme }) => theme.colors.canvas};
-`;
+const PageWrapper = styled.div`min-height: 100vh; background: ${({ theme }) => theme.colors.canvas};`;
+const Header = styled.header`height: 64px; border-bottom: 1px solid ${({ theme }) => theme.colors.dividerSoft};`;
+const HeaderContainer = styled.div`max-width: 1120px; height: 100%; margin: 0 auto; padding: 0 24px; display: flex; align-items: center; justify-content: space-between;`;
+const LogoButton = styled.button`display: flex;`;
+const LogoImage = styled.img`width: 100px;`;
+const NavGroup = styled.nav`display: flex; gap: 24px;`;
+const NavButton = styled.button<{ $active?: boolean }>`font-size: 14px; font-weight: ${({ $active }) => $active ? 700 : 500}; color: ${({ $active, theme }) => $active ? theme.colors.primary : theme.colors.charcoal};`;
+const BackToList = styled.button`font-size: 13px; color: ${({ theme }) => theme.colors.mute};`;
+const MainContainer = styled.main`max-width: 1120px; margin: 0 auto; padding: 48px 24px 80px; display: flex; gap: 48px; @media (max-width: 860px) { flex-direction: column; }`;
+const FormSection = styled.section`flex: 1; min-width: 0;`;
+const PageTitle = styled.h1`font-size: 38px; font-weight: 800; letter-spacing: -1px;`;
+const PageSubtitle = styled.p`font-size: 14px; color: ${({ theme }) => theme.colors.mute}; margin: 10px 0 34px; line-height: 1.6;`;
+const Form = styled.form`display: flex; flex-direction: column; gap: 22px;`;
+const FormGroup = styled.div`display: flex; flex-direction: column; gap: 8px;`;
+const Label = styled.label`font-size: 13px; font-weight: 700;`;
+const fieldStyle = (props: { theme: { colors: { surfaceCard: string; hairlineStrong: string; primary: string }; radii: { md: string } } }) => `background:${props.theme.colors.surfaceCard};border:1px solid ${props.theme.colors.hairlineStrong};border-radius:${props.theme.radii.md};outline:none;&:focus{border-color:${props.theme.colors.primary};}`;
+const Input = styled.input`height: 44px; padding: 0 14px; font-size: 14px; ${fieldStyle}`;
+const Select = styled.select`height: 44px; padding: 0 12px; font-size: 14px; ${fieldStyle}`;
+const TextArea = styled.textarea`min-height: 210px; padding: 14px; resize: vertical; line-height: 1.6; ${fieldStyle}`;
+const HelperText = styled.span`font-size: 11px; color: ${({ theme }) => theme.colors.ash};`;
+const RowGrid = styled.div`display: grid; grid-template-columns: 1fr 1fr; gap: 16px; @media (max-width: 560px) { grid-template-columns: 1fr; }`;
+const InfoBanner = styled.div`padding: 13px 15px; border-radius: ${({ theme }) => theme.radii.md}; background: #f0f6ff; color: ${({ theme }) => theme.colors.charcoal}; font-size: 12px;`;
+const ErrorMessage = styled.div`padding: 12px 14px; border-radius: 8px; color: #b91c1c; background: #fef2f2; font-size: 13px;`;
+const ActionRow = styled.div`display: flex; justify-content: space-between; align-items: center;`;
+const CancelButton = styled.button`padding: 10px 14px; color: ${({ theme }) => theme.colors.mute}; font-size: 13px;`;
+const SubmitButton = styled.button`padding: 12px 24px; border-radius: ${({ theme }) => theme.radii.full}; background: ${({ theme }) => theme.colors.primary}; color: ${({ theme }) => theme.colors.primaryOn}; font-size: 14px; font-weight: 700; &:disabled { opacity: .55; }`;
+const PreviewAside = styled.aside`width: 310px; flex-shrink: 0; @media (max-width: 860px) { width: 100%; }`;
+const PreviewCard = styled.div`overflow: hidden; border: 1px solid ${({ theme }) => theme.colors.dividerSoft}; border-radius: 16px; background: #fff; box-shadow: 0 10px 25px rgba(0,0,0,.04);`;
+const PreviewIframe = styled.iframe`display: block; width: 100%; aspect-ratio: 16 / 9; border: 0;`;
+const PreviewPlaceholder = styled.div`aspect-ratio: 16 / 9; display: grid; place-items: center; padding: 24px; text-align: center; color: #94a3b8; background: #0f172a; font-size: 12px;`;
+const PreviewBody = styled.div`padding: 18px;`;
+const PreviewTitle = styled.h3`font-size: 16px; font-weight: 700;`;
+const PreviewArtist = styled.p`font-size: 12px; color: ${({ theme }) => theme.colors.mute}; margin-top: 4px;`;
+const PreviewStatus = styled.p<{ $valid: boolean }>`font-size: 11px; margin-top: 18px; font-weight: 700; color: ${({ $valid }) => $valid ? '#15803d' : '#64748b'};`;
+const ModalBackdrop = styled.div`position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 20px; background: rgba(15,23,42,.55);`;
+const Modal = styled.div`width: min(480px, 100%); max-height: 80vh; overflow: auto; padding: 28px; border-radius: 18px; background: #fff; box-shadow: 0 24px 70px rgba(0,0,0,.2);`;
+const ModalTitle = styled.h2`font-size: 22px; font-weight: 800;`;
+const ModalText = styled.p`font-size: 13px; line-height: 1.6; color: ${({ theme }) => theme.colors.mute}; margin-top: 8px;`;
+const DuplicateList = styled.div`display: flex; flex-direction: column; gap: 8px; margin: 20px 0;`;
+const DuplicateItem = styled.div`display: flex; justify-content: space-between; gap: 12px; padding: 12px; border-radius: 9px; background: #f8fafc; font-size: 13px; span { color: #64748b; }`;
+const ModalActions = styled.div`display: flex; justify-content: flex-end; gap: 8px;`;
 
-const Header = styled.header`
-  width: 100%;
-  height: 64px;
-  border-bottom: 1px solid ${({ theme }) => theme.colors.dividerSoft};
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  position: sticky;
-  top: 0;
-  background-color: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(8px);
-  z-index: 100;
-`;
-
-const HeaderContainer = styled.div`
-  width: 100%;
-  max-width: 1200px;
-  padding: 0 24px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-`;
-
-const LogoImage = styled.img`
-  height: 24px;
-`;
-
-const NavGroup = styled.nav`
-  display: flex;
-  gap: 24px;
-`;
-
-const NavLink = styled.a<{ active?: boolean }>`
-  font-size: 14px;
-  font-weight: ${({ active }) => (active ? '600' : '400')};
-  color: ${({ active, theme }) => (active ? theme.colors.primary : theme.colors.charcoal)};
-`;
-
-const HeaderAuth = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 16px;
-`;
-
-const LoginButton = styled.a`
-  font-size: 14px;
-  font-weight: 500;
-  color: ${({ theme }) => theme.colors.charcoal};
-`;
-
-const StartHeaderButton = styled.button`
-  padding: 8px 16px;
-  background-color: ${({ theme }) => theme.colors.primary};
-  color: ${({ theme }) => theme.colors.primaryOn};
-  border-radius: ${({ theme }) => theme.radii.full};
-  font-size: 13px;
-  font-weight: 600;
-`;
-
-const MainContainer = styled.div`
-  width: 100%;
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: 40px 24px 80px;
-  display: flex;
-  gap: 48px;
-
-  @media (max-width: 900px) {
-    flex-direction: column;
-  }
-`;
-
-const FormSection = styled.div`
-  flex: 1;
-`;
-
-const Breadcrumb = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: ${({ theme }) => theme.colors.ash};
-  margin-bottom: 20px;
-
-  .active {
-    color: ${({ theme }) => theme.colors.ink};
-    font-weight: 600;
-  }
-`;
-
-const PageTitle = styled.h1`
-  font-size: 40px;
-  font-weight: 800;
-  color: ${({ theme }) => theme.colors.ink};
-  letter-spacing: -1px;
-`;
-
-const PageSubtitle = styled.p`
-  font-size: 14px;
-  color: ${({ theme }) => theme.colors.mute};
-  margin-top: 10px;
-  margin-bottom: 36px;
-  line-height: 1.6;
-`;
-
-const Form = styled.form`
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-`;
-
-const FormGroup = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-`;
-
-const Label = styled.label`
-  font-size: 13px;
-  font-weight: 700;
-  color: ${({ theme }) => theme.colors.ink};
-`;
-
-const InputWrapper = styled.div`
-  position: relative;
-  width: 100%;
-`;
-
-const InputIcon = styled.span`
-  position: absolute;
-  left: 14px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: ${({ theme }) => theme.colors.ash};
-  display: flex;
-`;
-
-const Input = styled.input`
-  width: 100%;
-  height: 44px;
-  padding: 0 14px;
-  padding-left: ${({ placeholder }) => (placeholder?.includes('http') ? '42px' : '14px')};
-  background-color: ${({ theme }) => theme.colors.surfaceCard};
-  border: 1px solid ${({ theme }) => theme.colors.hairlineStrong};
-  border-radius: ${({ theme }) => theme.radii.md};
-  font-size: 14px;
-  outline: none;
-
-  &:focus {
-    border-color: ${({ theme }) => theme.colors.primary};
-  }
-`;
-
-const HelperText = styled.span`
-  font-size: 11px;
-  color: ${({ theme }) => theme.colors.ash};
-`;
-
-const RowGrid = styled.div`
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-
-  @media (max-width: 600px) {
-    grid-template-columns: 1fr;
-  }
-`;
-
-const TextArea = styled.textarea`
-  width: 100%;
-  height: 180px;
-  padding: 14px;
-  background-color: ${({ theme }) => theme.colors.surfaceCard};
-  border: 1px solid ${({ theme }) => theme.colors.hairlineStrong};
-  border-radius: ${({ theme }) => theme.radii.md};
-  font-size: 13px;
-  line-height: 1.6;
-  outline: none;
-  resize: vertical;
-
-  &:focus {
-    border-color: ${({ theme }) => theme.colors.primary};
-  }
-`;
-
-const InfoBanner = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
-  background-color: #f0f6ff;
-  border-radius: ${({ theme }) => theme.radii.md};
-  font-size: 12px;
-  color: ${({ theme }) => theme.colors.charcoal};
-`;
-
-const InfoIcon = styled.span`
-  color: ${({ theme }) => theme.colors.primary};
-  font-weight: 700;
-`;
-
-const ActionRow = styled.div`
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 12px;
-`;
-
-const BackButton = styled.button`
-  font-size: 13px;
-  font-weight: 600;
-  color: ${({ theme }) => theme.colors.mute};
-  background: none;
-
-  &:hover {
-    color: ${({ theme }) => theme.colors.ink};
-  }
-`;
-
-const SubmitButton = styled.button`
-  padding: 12px 28px;
-  background-color: ${({ theme }) => theme.colors.primary};
-  color: ${({ theme }) => theme.colors.primaryOn};
-  border-radius: ${({ theme }) => theme.radii.full};
-  font-size: 14px;
-  font-weight: 700;
-`;
-
-const SidebarArea = styled.aside`
-  width: 280px;
-  flex-shrink: 0;
-
-  @media (max-width: 900px) {
-    width: 100%;
-  }
-`;
-
-const PreviewCard = styled.div`
-  background-color: #ffffff;
-  border: 1px solid ${({ theme }) => theme.colors.dividerSoft};
-  border-radius: 16px;
-  overflow: hidden;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.03);
-`;
-
-const CardVideoBox = styled.div`
-  width: 100%;
-  height: 150px;
-  background-color: #0f172a;
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 12px;
-`;
-
-const WindowControls = styled.div`
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  display: flex;
-  gap: 6px;
-`;
-
-const Dot = styled.span<{ bg: string }>`
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background-color: ${({ bg }) => bg};
-`;
-
-const PlayIconCircle = styled.div`
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background-color: rgba(255, 255, 255, 0.15);
-  color: #ffffff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-`;
-
-const CardBody = styled.div`
-  padding: 20px;
-`;
-
-const CardTitle = styled.h3`
-  font-size: 15px;
-  font-weight: 700;
-  color: ${({ theme }) => theme.colors.ink};
-`;
-
-const CardDesc = styled.p`
-  font-size: 12px;
-  color: ${({ theme }) => theme.colors.mute};
-  margin-top: 6px;
-  line-height: 1.5;
-`;
-
-const ProgressStatus = styled.div`
-  width: 100%;
-  height: 4px;
-  background-color: #f1f5f9;
-  border-radius: 2px;
-  margin-top: 20px;
-  overflow: hidden;
-`;
-
-const ProgressFill = styled.div`
-  width: 30%;
-  height: 100%;
-  background-color: ${({ theme }) => theme.colors.primary};
-`;
-
-const StatusRow = styled.div`
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 8px;
-  font-size: 11px;
-  color: ${({ theme }) => theme.colors.ash};
-`;
-
-const StatusTag = styled.span`
-  font-weight: 600;
-  color: ${({ theme }) => theme.colors.mute};
-`;
-
-const Footer = styled.footer`
-  width: 100%;
-  border-top: 1px solid ${({ theme }) => theme.colors.dividerSoft};
-  padding: 32px 0;
-  margin-top: auto;
-`;
-
-const FooterContainer = styled.div`
-  width: 100%;
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 24px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-
-  @media (max-width: 640px) {
-    flex-direction: column;
-    gap: 16px;
-  }
-`;
-
-const FooterLogo = styled.img`
-  height: 20px;
-`;
-
-const FooterLinks = styled.div`
-  display: flex;
-  gap: 20px;
-
-  a {
-    font-size: 12px;
-    color: ${({ theme }) => theme.colors.ash};
-
-    &:hover {
-      color: ${({ theme }) => theme.colors.ink};
-    }
-  }
-`;
-
-// 4. Export Default
 export default SongRegisterPage;

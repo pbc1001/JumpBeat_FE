@@ -1,625 +1,279 @@
-// 1. Import 문
-import React, { useState, useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import styled from '@emotion/styled';
-import { keyframes } from '@emotion/react';
-import LogoSvg from '../assets/Logo.svg';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ApiError, songApi } from '../api/client';
+import type { SongDetail } from '../api/types';
+import { loadYouTubeApi, type YouTubePlayer } from '../youtubePlayer';
 
-// 가상 연습 데이터 (가사 목록)
-const MOCK_LYRICS = [
-    'Im crazy about you',
-  '원하는걸 다 시험해봐',
-  'All on me',
-  '되어 줄게 너의 all the possibility',
-  '이 감정을 더 알고 싶어',
-  'Im falling for',
-  'all the possibility',
-];
+type GameMode = 'CONTINUE' | 'FAIL_FAST';
+type LyricScope = 'ALL' | 'KOREAN' | 'ENGLISH';
+type GameStats = { correct: number; wrong: number; miss: number };
 
-// 2. 컴포넌트 로직
+const normalize = (value: string) => value.trim().replace(/\s+/g, ' ');
+const detectLyricLanguage = (text: string) => {
+  const koreanCount = (text.match(/[가-힣ㄱ-ㅎㅏ-ㅣ]/g) ?? []).length;
+  const englishCount = (text.match(/[A-Za-z]/g) ?? []).length;
+  return koreanCount >= englishCount ? 'KOREAN' : 'ENGLISH';
+};
+
 const TypingPracticePage = () => {
-  const [currentIndex, setCurrentIndex] = useState<number>(1); 
-  const [userInput, setUserInput] = useState<string>('');
-  
-  // 실시간 스탯
-  const [wpm, setWpm] = useState<number>(84);
-  const [accuracy, setAccuracy] = useState<number>(98.2);
-  const [combo, setCombo] = useState<number>(142);
-  const [isBgVideoOn, setIsBgVideoOn] = useState<boolean>(true);
-
-  // "야호!" 애니메이션 효과 상태
-  const [cheers, setCheers] = useState<{ id: number; text: string; x: number; y: number }[]>([]);
-  
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const songId = searchParams.get('songId');
+  const playerHostRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<YouTubePlayer | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const indexRef = useRef(0);
+  const statsRef = useRef<GameStats>({ correct: 0, wrong: 0, miss: 0 });
+  const startedAtRef = useRef(0);
+  const judgeRef = useRef<(result: keyof GameStats) => void>(() => undefined);
+  const [song, setSong] = useState<SongDetail | null>(null);
+  const [mode, setMode] = useState<GameMode>('CONTINUE');
+  const [lyricScope, setLyricScope] = useState<LyricScope>('ALL');
+  const [phase, setPhase] = useState<'SETUP' | 'PLAYING'>('SETUP');
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [input, setInput] = useState('');
+  const [stats, setStats] = useState<GameStats>({ correct: 0, wrong: 0, miss: 0 });
+  const [feedback, setFeedback] = useState('');
+  const [isLoading, setIsLoading] = useState(Boolean(songId));
+  const [error, setError] = useState('');
+  const [isPlayerReady, setIsPlayerReady] = useState(false);
+  const gameLyrics = useMemo(() => {
+    if (!song || lyricScope === 'ALL') return song?.lyrics ?? [];
+    return song.lyrics.filter((line) => detectLyricLanguage(line.text) === lyricScope);
+  }, [lyricScope, song]);
+  const activeLine = song?.lyrics[currentIndex];
+  const isActiveLineRequired = activeLine ? lyricScope === 'ALL' || detectLyricLanguage(activeLine.text) === lyricScope : false;
 
-  // 현재 타겟 문장
-  const currentTarget = MOCK_LYRICS[currentIndex] || '';
-  const prevTarget = MOCK_LYRICS[currentIndex - 1] || '';
-  const nextTargets = MOCK_LYRICS.slice(currentIndex + 1, currentIndex + 3);
-
-  // 진행률 계산
-  const progressPercent = Math.round(((currentIndex + 1) / MOCK_LYRICS.length) * 100);
-
-  // 자동 포커스 유지
   useEffect(() => {
+    if (!songId) return;
+    let active = true;
+    songApi.getSong(songId)
+      .then((data) => { if (active) setSong(data); })
+      .catch((requestError) => { if (active) setError(requestError instanceof ApiError ? requestError.message : '곡을 불러오지 못했습니다.'); })
+      .finally(() => { if (active) setIsLoading(false); });
+    return () => { active = false; };
+  }, [songId]);
+
+  useEffect(() => {
+    if (!song || !playerHostRef.current) return;
+    let active = true;
+    let created: YouTubePlayer | null = null;
+    loadYouTubeApi().then((YT) => {
+      if (!active || !playerHostRef.current) return;
+      created = new YT.Player(playerHostRef.current, {
+        videoId: song.youtubeVideoId,
+        playerVars: { controls: 1, rel: 0 },
+        events: {
+          onReady: ({ target }) => { playerRef.current = target; setIsPlayerReady(true); },
+          onError: () => {
+            setIsPlayerReady(false);
+            setError('이 영상은 외부 재생이 제한되어 게임을 시작할 수 없습니다. 다른 영상으로 등록해 주세요.');
+          },
+        },
+      });
+    });
+    return () => { active = false; playerRef.current = null; setIsPlayerReady(false); created?.destroy(); };
+  }, [song]);
+
+  const finish = (finalStats: GameStats, endedEarly: boolean) => {
+    playerRef.current?.pauseVideo();
+    const processed = finalStats.correct + finalStats.wrong + finalStats.miss;
+    navigate('/result', {
+      replace: true,
+      state: {
+        songId,
+        title: song?.title,
+        artist: song?.artist,
+        difficulty: song?.difficulty,
+        score: finalStats.correct * 100,
+        accuracy: processed ? Math.round((finalStats.correct / processed) * 100) : 0,
+        correct: finalStats.correct,
+        wrong: finalStats.wrong,
+        miss: finalStats.miss,
+        total: gameLyrics.length,
+        elapsedMs: Date.now() - startedAtRef.current,
+        endedEarly,
+      },
+    });
+  };
+
+  const isRequiredLine = (text: string) => lyricScope === 'ALL' || detectLyricLanguage(text) === lyricScope;
+
+  const advanceWithoutScore = () => {
+    if (!song) return;
+    const isLast = indexRef.current >= song.lyrics.length - 1;
+    if (isLast) {
+      finish(statsRef.current, false);
+      return;
+    }
+    indexRef.current += 1;
+    setCurrentIndex(indexRef.current);
+    setInput('');
+  };
+
+  const judge = (result: keyof GameStats) => {
+    if (!song) return;
+    const nextStats = { ...statsRef.current, [result]: statsRef.current[result] + 1 };
+    statsRef.current = nextStats;
+    setStats(nextStats);
+    setInput('');
+    setFeedback(result === 'correct' ? 'PERFECT!' : result === 'wrong' ? 'WRONG!' : 'MISS!');
+    const isLast = indexRef.current >= song.lyrics.length - 1;
+    if (isLast || (result !== 'correct' && mode === 'FAIL_FAST')) {
+      finish(nextStats, !isLast);
+      return;
+    }
+    indexRef.current += 1;
+    setCurrentIndex(indexRef.current);
+    window.setTimeout(() => setFeedback(''), 500);
+  };
+  useEffect(() => {
+    judgeRef.current = judge;
+  });
+
+  useEffect(() => {
+    if (phase !== 'PLAYING' || !song) return;
+    const timer = window.setInterval(() => {
+      const player = playerRef.current;
+      const line = song.lyrics[indexRef.current];
+      if (!player || !line) return;
+      const deadline = song.lyrics[indexRef.current + 1]?.startTimeMs ?? song.durationMs;
+      if (deadline !== null && player.getCurrentTime() * 1000 >= deadline) {
+        if (isRequiredLine(line.text)) judge('miss');
+        else advanceWithoutScore();
+      }
+    }, 100);
+    return () => window.clearInterval(timer);
+  });
+
+  const startGame = () => {
+    if (!song || !playerRef.current) { setError('영상 플레이어가 준비될 때까지 잠시 기다려 주세요.'); return; }
+    if (gameLyrics.length === 0) { setError('선택한 언어에 해당하는 가사가 없습니다.'); return; }
+    indexRef.current = 0;
+    statsRef.current = { correct: 0, wrong: 0, miss: 0 };
+    setCurrentIndex(0); setStats(statsRef.current); setError(''); setPhase('PLAYING');
+    startedAtRef.current = Date.now();
+    playerRef.current.seekTo((song.lyrics[0].startTimeMs ?? 0) / 1000, true);
+    playerRef.current.playVideo();
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter' || !song) return;
+    event.preventDefault();
+    const line = song.lyrics[currentIndex];
+    if (!isRequiredLine(line.text)) return;
+    if (playerRef.current && playerRef.current.getCurrentTime() * 1000 < (line.startTimeMs ?? 0)) {
+      setFeedback('아직 시작 전이에요');
+      return;
+    }
+    judge(normalize(event.currentTarget.value) === normalize(line.text) ? 'correct' : 'wrong');
+  };
+
+  useEffect(() => {
+    if (phase !== 'PLAYING' || !isActiveLineRequired) return;
     inputRef.current?.focus();
-  }, [currentIndex]);
 
-  // 문장 완료 처리 함수
-  const handleSentenceComplete = () => {
-    if (userInput.trim() === '') return;
+    const captureTyping = (event: globalThis.KeyboardEvent) => {
+      const inputElement = inputRef.current;
+      if (!inputElement || event.target === inputElement || event.ctrlKey || event.metaKey || event.altKey) return;
+      inputElement.focus();
 
-    // "야호!" 팝업 텍스트 생성
-    const newCheer = {
-      id: Date.now(),
-      text: userInput.trim() === currentTarget ? '야호! PERFECT! 🎉' : '성공! ✨',
-      x: Math.random() * 80 + 10, // 위치 난수
-      y: 40 + Math.random() * 20,
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        if (activeLine) judgeRef.current(normalize(input) === normalize(activeLine.text) ? 'correct' : 'wrong');
+        return;
+      }
+      if (event.key === 'Backspace') {
+        event.preventDefault();
+        setInput((current) => current.slice(0, -1));
+        return;
+      }
+      if (event.key.length === 1) {
+        event.preventDefault();
+        setInput((current) => current + event.key);
+      }
     };
-    setCheers((prev) => [...prev, newCheer]);
 
-    // 콤보 및 타수 증가
-    setCombo((prev) => prev + 1);
-    setWpm((prev) => Math.min(prev + Math.floor(Math.random() * 3) + 1, 250));
+    window.addEventListener('keydown', captureTyping, true);
+    return () => window.removeEventListener('keydown', captureTyping, true);
+  }, [activeLine, input, isActiveLineRequired, phase]);
 
-    // 다음 문장으로 이동
-    if (currentIndex < MOCK_LYRICS.length - 1) {
-      setCurrentIndex((prev) => prev + 1);
-    } else {
-      // 마지막 문장 달성 시 처음으로 리셋
-      setCurrentIndex(0);
-    }
-
-    setUserInput('');
-  };
-
-  // 키 입력 핸들러
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleSentenceComplete();
-    }
-  };
-
-  // 실시간 입력값 상태 변경 & 자동 다음 문장 넘어감 체크
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setUserInput(val);
-
-    // 완전 일치 시 즉시 제출 원할 경우 (주석 해제 시 자동 넘어감)
-    if (val === currentTarget) {
-      setTimeout(() => {
-        handleSentenceComplete();
-      }, 150);
-    }
-  };
-
-  // 3초 후 "야호!" 이펙트 제거
-  const handleAnimationEnd = (id: number) => {
-    setCheers((prev) => prev.filter((item) => item.id !== id));
-  };
+  if (isLoading) return <Centered>게임을 준비하는 중입니다...</Centered>;
+  if (!song) return <Centered><p>{error || '곡 정보가 없습니다.'}</p><button onClick={() => navigate('/selectsong')}>곡 목록으로</button></Centered>;
+  const line = song.lyrics[currentIndex];
+  const isCurrentLineRequired = isRequiredLine(line.text);
+  const processed = stats.correct + stats.wrong + stats.miss;
+  const accuracy = processed ? Math.round((stats.correct / processed) * 100) : 100;
 
   return (
-    <PageWrapper onClick={() => inputRef.current?.focus()}>
-      {/* 상단 네비게이션 헤더 */}
-      <Header>
-        <HeaderContainer>
-          <LogoImage src={LogoSvg} alt="최애의 타자" />
-          <NavGroup>
-            <NavLink href="#play" active>
-              플레이 중
-            </NavLink>
-            <NavLink href="#create">제작하기</NavLink>
-            <NavLink href="#leaderboard">리더보드</NavLink>
-          </NavGroup>
-          <HeaderAuth>
-            <LoginButton href="#login">로그인</LoginButton>
-            <StartHeaderButton>시작하기</StartHeaderButton>
-          </HeaderAuth>
-        </HeaderContainer>
-      </Header>
-
-      {/* 상단 스탯 대시보드 바 */}
-      <DashboardBar>
-        <DashboardContainer>
-          <StatGroup>
-            <StatItem>
-              <StatLabel>속도 (WPM)</StatLabel>
-              <StatValue>{wpm}</StatValue>
-            </StatItem>
-            <Divider />
-            <StatItem>
-              <StatLabel>정확도</StatLabel>
-              <StatValue color="#22c55e">{accuracy}%</StatValue>
-            </StatItem>
-            <Divider />
-            <StatItem>
-              <StatLabel>콤보</StatLabel>
-              <StatValue color="#0066ff">{combo}</StatValue>
-            </StatItem>
-          </StatGroup>
-
-          <RightInfoGroup>
-            <TrackInfo>
-              <TrackLabel>현재 곡</TrackLabel>
-              <TrackTitle>너.모.되</TrackTitle>
-            </TrackInfo>
-            <BgToggleButton
-              active={isBgVideoOn}
-              onClick={() => setIsBgVideoOn(!isBgVideoOn)}
-            >
-              📹 배경 영상 {isBgVideoOn ? '켜기' : '끄기'}
-            </BgToggleButton>
-            <PauseButton title="일시정지">⏸</PauseButton>
-          </RightInfoGroup>
-        </DashboardContainer>
-      </DashboardBar>
-
-      {/* 메인 타이핑 인터페이스 */}
-      <MainContent>
-        <TypingCard>
-          <CardHeader>
-            <CardTitle>연습 문서 · 가사 타이핑</CardTitle>
-            <ProgressBadge>진행률: {progressPercent}%</ProgressBadge>
-          </CardHeader>
-
-          {/* 가사 출력 흐름 영역 */}
-          <LyricsArea>
-            {/* 이전 문장 (희미함) */}
-            <FadedLine>{prevTarget || '...'}</FadedLine>
-
-            {/* 현재 타겟 문장 & 입력 대조 하이라이트 */}
-            <CurrentLineBox>
-              <AccentBar />
-              <TargetText>
-                {currentTarget.split('').map((char, idx) => {
-                  let charColor = '#1e293b'; // 기본 색상
-                  if (idx < userInput.length) {
-                    charColor =
-                      userInput[idx] === char ? '#0066ff' : '#ef4444'; // 맞으면 파랑, 틀리면 빨강
-                  }
-                  return (
-                    <span key={idx} style={{ color: charColor }}>
-                      {char}
-                    </span>
-                  );
-                })}
-              </TargetText>
-            </CurrentLineBox>
-
-            {/* 다음 문장들 (희미함) */}
-            {nextTargets.map((line, i) => (
-              <FadedLine key={i}>{line}</FadedLine>
-            ))}
-          </LyricsArea>
-        </TypingCard>
-
-        {/* 하단 입력 폼 */}
-        <InputWrapper>
-          <HiddenInput
-            ref={inputRef}
-            value={userInput}
-            onChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            placeholder="여기에 가사를 입력하세요..."
-          />
-          <StatusBadge>
-            <CheckIcon>✓</CheckIcon> 퍼펙트
-          </StatusBadge>
-        </InputWrapper>
-
-        {/* 단축키 가이드 */}
-        <ShortcutNotice>
-          <Kbd>Enter</Kbd> 줄바꿈 <Kbd>Esc</Kbd> 일시정지
-        </ShortcutNotice>
-
-        {/* "야호!" 이펙트 애니메이션 오버레이 */}
-        {cheers.map((cheer) => (
-          <CheerFloat
-            key={cheer.id}
-            style={{ left: `${cheer.x}%`, top: `${cheer.y}%` }}
-            onAnimationEnd={() => handleAnimationEnd(cheer.id)}
-          >
-            {cheer.text}
-          </CheerFloat>
-        ))}
-      </MainContent>
-
-      {/* 푸터 */}
-      <Footer>
-        <FooterContainer>
-          <FooterLogo src={LogoSvg} alt="최애의 타자" />
-          <FooterText>© 2024. 런칭 스타일 연습 모드.</FooterText>
-          <FooterLinks>
-            <a href="#terms">이용약관</a>
-            <a href="#privacy">개인정보처리방침</a>
-            <a href="#support">고객지원</a>
-          </FooterLinks>
-        </FooterContainer>
-      </Footer>
+    <PageWrapper onClick={() => phase === 'PLAYING' && inputRef.current?.focus()}>
+      <TopBar>
+        <button type="button" onClick={() => navigate('/selectsong')}>← 종료</button>
+        <Track><strong>{song.title}</strong><span>{song.artist}</span></Track>
+        <Stats><span>점수 <b>{stats.correct * 100}</b></span><span>정확도 <b>{accuracy}%</b></span><span>MISS <b>{stats.wrong + stats.miss}</b></span></Stats>
+      </TopBar>
+      <GameStage>
+        <BackgroundVideo><PlayerHost ref={playerHostRef} /></BackgroundVideo>
+        <BackgroundShade />
+        {phase === 'SETUP' ? (
+          <SetupCard>
+            <h1>게임 모드를 선택하세요</h1>
+            <ModeButton type="button" $active={mode === 'CONTINUE'} onClick={() => setMode('CONTINUE')}><strong>계속 진행</strong><span>틀리거나 놓쳐도 다음 가사로 넘어갑니다.</span></ModeButton>
+            <ModeButton type="button" $active={mode === 'FAIL_FAST'} onClick={() => setMode('FAIL_FAST')}><strong>즉시 종료</strong><span>오답 또는 Miss가 한 번 나오면 게임이 끝납니다.</span></ModeButton>
+            <ScopeTitle>입력할 가사</ScopeTitle>
+            <ScopeGroup>
+              <ScopeButton type="button" $active={lyricScope === 'ALL'} onClick={() => setLyricScope('ALL')}>전체 <span>{song.lyrics.length}</span></ScopeButton>
+              <ScopeButton type="button" $active={lyricScope === 'KOREAN'} onClick={() => setLyricScope('KOREAN')}>한글 <span>{song.lyrics.filter((line) => detectLyricLanguage(line.text) === 'KOREAN').length}</span></ScopeButton>
+              <ScopeButton type="button" $active={lyricScope === 'ENGLISH'} onClick={() => setLyricScope('ENGLISH')}>영어 <span>{song.lyrics.filter((line) => detectLyricLanguage(line.text) === 'ENGLISH').length}</span></ScopeButton>
+            </ScopeGroup>
+            {gameLyrics.length === 0 && <ScopeWarning>선택한 언어에 해당하는 가사가 없습니다.</ScopeWarning>}
+            {error && <ErrorMessage>{error}</ErrorMessage>}
+            <StartButton type="button" disabled={!isPlayerReady || gameLyrics.length === 0} onClick={startGame}>{isPlayerReady ? '게임 시작' : '영상 준비 중...'}</StartButton>
+          </SetupCard>
+        ) : (
+          <PlayArea>
+            <Progress>{currentIndex + 1} / {song.lyrics.length} · 입력 대상 {gameLyrics.length}줄</Progress>
+            <PreviousLine>{song.lyrics[currentIndex - 1]?.text ?? '...'}</PreviousLine>
+            <LineMode $required={isCurrentLineRequired}>{isCurrentLineRequired ? '입력할 가사' : '듣는 구간 · 입력하지 않아도 됩니다'}</LineMode>
+            <CurrentLine $required={isCurrentLineRequired}>
+              {line.text.split('').map((character, index) => <span key={index} data-state={index < input.length ? (input[index] === character ? 'correct' : 'wrong') : undefined}>{character}</span>)}
+            </CurrentLine>
+            <NextLine>{song.lyrics[currentIndex + 1]?.text ?? ''}</NextLine>
+            <TypingInput ref={inputRef} disabled={!isCurrentLineRequired} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={handleKeyDown} onBlur={() => { if (phase === 'PLAYING' && isCurrentLineRequired) window.setTimeout(() => inputRef.current?.focus(), 0); }} placeholder={isCurrentLineRequired ? '페이지 어디서든 가사를 입력하고 Enter를 누르세요' : '이 가사는 입력하지 않아도 됩니다'} autoComplete="off" />
+            <Feedback $bad={feedback !== 'PERFECT!'}>{feedback}</Feedback>
+          </PlayArea>
+        )}
+      </GameStage>
     </PageWrapper>
   );
 };
 
-// 3. Emotion Styled & Keyframes 정의
+const PageWrapper = styled.div`min-height:100vh;background:#020617;color:#fff;overflow:hidden;`;
+const TopBar = styled.header`min-height:68px;padding:10px 28px;position:relative;z-index:10;display:flex;align-items:center;justify-content:space-between;gap:20px;background:rgba(2,6,23,.76);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,.14);button{color:#cbd5e1;}@media(max-width:700px){flex-wrap:wrap;}`;
+const Track = styled.div`display:flex;flex-direction:column;text-align:center;font-size:14px;span{font-size:11px;color:#cbd5e1;margin-top:2px;}`;
+const Stats = styled.div`display:flex;gap:18px;font-size:12px;color:#cbd5e1;b{color:#fff;margin-left:4px;}`;
+const GameStage = styled.main`position:relative;min-height:calc(100vh - 68px);padding:42px 24px;display:grid;place-items:center;isolation:isolate;`;
+const BackgroundVideo = styled.div`position:absolute;inset:0;z-index:-2;overflow:hidden;background:#020617;pointer-events:none;iframe{position:absolute;top:50%;left:50%;width:100vw;height:56.25vw;min-width:177.78vh;min-height:100vh;transform:translate(-50%,-50%);border:0;}`;
+const BackgroundShade = styled.div`position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,rgba(2,6,23,.52),rgba(2,6,23,.76)),radial-gradient(circle at center,transparent 0%,rgba(2,6,23,.35) 75%);`;
+const PlayerHost = styled.div`position:absolute;inset:0;width:100%;height:100%;`;
+const SetupCard = styled.section`width:min(520px,100%);padding:32px;border-radius:20px;background:rgba(15,23,42,.78);border:1px solid rgba(255,255,255,.2);backdrop-filter:blur(18px);box-shadow:0 24px 70px rgba(0,0,0,.35);display:flex;flex-direction:column;gap:12px;h1{font-size:22px;font-weight:800;margin-bottom:6px;color:#fff;}`;
+const ModeButton = styled.button<{ $active:boolean }>`padding:15px;text-align:left;border:2px solid ${({$active})=>$active?'#0066ff':'#e2e8f0'};border-radius:10px;background:${({$active})=>$active?'#eff6ff':'#fff'};display:flex;flex-direction:column;gap:4px;strong{font-size:14px;}span{font-size:12px;color:#64748b;}`;
+const ScopeTitle = styled.h2`margin-top:8px;font-size:13px;font-weight:800;color:#fff;`;
+const ScopeGroup = styled.div`display:grid;grid-template-columns:repeat(3,1fr);gap:8px;`;
+const ScopeButton = styled.button<{ $active:boolean }>`padding:10px 6px;border:1px solid ${({$active})=>$active?'#60a5fa':'rgba(255,255,255,.25)'};border-radius:9px;background:${({$active})=>$active?'rgba(37,99,235,.35)':'rgba(255,255,255,.08)'};color:#fff;font-size:12px;font-weight:700;span{margin-left:3px;color:#bfdbfe;font-size:10px;}`;
+const ScopeWarning = styled.p`padding:9px;border-radius:7px;background:rgba(239,68,68,.18);color:#fecaca;font-size:11px;`;
+const StartButton = styled.button`margin-top:8px;padding:13px;border-radius:999px;background:#0066ff;color:#fff;font-weight:800;&:disabled{opacity:.5;cursor:not-allowed;}`;
+const ErrorMessage = styled.p`font-size:12px;color:#b91c1c;background:#fef2f2;padding:10px;border-radius:7px;`;
+const PlayArea = styled.section`width:min(760px,100%);position:relative;padding:42px 38px;border-radius:22px;background:rgba(15,23,42,.72);border:1px solid rgba(255,255,255,.2);backdrop-filter:blur(16px);box-shadow:0 24px 80px rgba(0,0,0,.38);text-align:center;@media(max-width:600px){padding:30px 20px;}`;
+const Progress = styled.p`font-size:12px;color:#cbd5e1;margin-bottom:28px;`;
+const PreviousLine = styled.p`min-height:22px;color:rgba(255,255,255,.42);font-size:14px;`;
+const LineMode = styled.p<{ $required:boolean }>`display:inline-block;margin-top:16px;padding:5px 10px;border-radius:999px;background:${({$required})=>$required?'rgba(37,99,235,.35)':'rgba(255,255,255,.1)'};color:${({$required})=>$required?'#bfdbfe':'#94a3b8'};font-size:11px;font-weight:700;`;
+const CurrentLine = styled.p<{ $required:boolean }>`min-height:70px;margin:14px 0 20px;color:${({$required})=>$required?'#fff':'rgba(255,255,255,.48)'};font-size:${({$required})=>$required?'30px':'24px'};font-weight:${({$required})=>$required?800:500};line-height:1.45;word-break:keep-all;text-shadow:0 2px 12px rgba(0,0,0,.7);transition:.2s;span[data-state=correct]{color:#60a5fa;}span[data-state=wrong]{color:#f87171;text-decoration:underline;}`;
+const NextLine = styled.p`min-height:22px;color:rgba(255,255,255,.62);font-size:14px;`;
+const TypingInput = styled.input`width:100%;height:52px;margin-top:30px;padding:0 16px;border:2px solid rgba(255,255,255,.34);border-radius:11px;background:rgba(255,255,255,.94);color:#0f172a;text-align:center;font-size:16px;outline:none;&:focus{border-color:#60a5fa;box-shadow:0 0 0 3px rgba(96,165,250,.2);}&:disabled{background:rgba(148,163,184,.25);border-color:rgba(255,255,255,.12);color:#cbd5e1;cursor:not-allowed;}`;
+const Feedback = styled.div<{ $bad:boolean }>`height:28px;margin-top:14px;font-size:20px;font-weight:900;color:${({$bad})=>$bad?'#ef4444':'#0066ff'};`;
+const Centered = styled.main`min-height:100vh;display:grid;place-content:center;gap:12px;text-align:center;color:#64748b;button{color:#0066ff;}`;
 
-// "야호!" 둥둥 떠오르는 애니메이션
-const floatUp = keyframes`
-  0% {
-    opacity: 0;
-    transform: translate(-50%, 10px) scale(0.8);
-  }
-  20% {
-    opacity: 1;
-    transform: translate(-50%, -20px) scale(1.2);
-  }
-  80% {
-    opacity: 1;
-    transform: translate(-50%, -60px) scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: translate(-50%, -80px) scale(0.9);
-  }
-`;
-
-const PageWrapper = styled.div`
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  background-color: #f8fafc;
-  user-select: none;
-  position: relative;
-  overflow: hidden;
-`;
-
-const Header = styled.header`
-  width: 100%;
-  height: 60px;
-  border-bottom: 1px solid ${({ theme }) => theme.colors.dividerSoft};
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  background-color: #ffffff;
-`;
-
-const HeaderContainer = styled.div`
-  width: 100%;
-  max-width: 1120px;
-  padding: 0 24px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-`;
-
-const LogoImage = styled.img`
-  height: 22px;
-`;
-
-const NavGroup = styled.nav`
-  display: flex;
-  gap: 24px;
-`;
-
-const NavLink = styled.a<{ active?: boolean }>`
-  font-size: 14px;
-  font-weight: ${({ active }) => (active ? '700' : '500')};
-  color: ${({ active, theme }) => (active ? theme.colors.primary : theme.colors.charcoal)};
-`;
-
-const HeaderAuth = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 12px;
-`;
-
-const LoginButton = styled.a`
-  font-size: 13px;
-  font-weight: 500;
-  color: ${({ theme }) => theme.colors.charcoal};
-`;
-
-const StartHeaderButton = styled.button`
-  padding: 6px 14px;
-  background-color: ${({ theme }) => theme.colors.primary};
-  color: #ffffff;
-  border-radius: ${({ theme }) => theme.radii.full};
-  font-size: 12px;
-  font-weight: 600;
-`;
-
-const DashboardBar = styled.div`
-  width: 100%;
-  background-color: #ffffff;
-  border-bottom: 1px solid ${({ theme }) => theme.colors.dividerSoft};
-  padding: 12px 0;
-`;
-
-const DashboardContainer = styled.div`
-  width: 100%;
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: 0 24px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-`;
-
-const StatGroup = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 32px;
-`;
-
-const StatItem = styled.div`
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-`;
-
-const StatLabel = styled.span`
-  font-size: 12px;
-  color: ${({ theme }) => theme.colors.ash};
-  font-weight: 600;
-`;
-
-const StatValue = styled.span<{ color?: string }>`
-  font-size: 20px;
-  font-weight: 800;
-  color: ${({ color, theme }) => color || theme.colors.ink};
-`;
-
-const Divider = styled.div`
-  width: 1px;
-  height: 16px;
-  background-color: #e2e8f0;
-`;
-
-const RightInfoGroup = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 16px;
-`;
-
-const TrackInfo = styled.div`
-  text-align: right;
-`;
-
-const TrackLabel = styled.span`
-  font-size: 10px;
-  color: ${({ theme }) => theme.colors.ash};
-  display: block;
-`;
-
-const TrackTitle = styled.span`
-  font-size: 13px;
-  font-weight: 700;
-  color: ${({ theme }) => theme.colors.ink};
-`;
-
-const BgToggleButton = styled.button<{ active?: boolean }>`
-  padding: 6px 12px;
-  background-color: #f1f5f9;
-  border: 1px solid ${({ theme }) => theme.colors.hairlineStrong};
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  color: ${({ theme }) => theme.colors.charcoal};
-
-  &:hover {
-    background-color: #e2e8f0;
-  }
-`;
-
-const PauseButton = styled.button`
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  background-color: #f1f5f9;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-`;
-
-const MainContent = styled.main`
-  flex: 1;
-  max-width: 800px;
-  width: 100%;
-  margin: 0 auto;
-  padding: 40px 24px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  position: relative;
-`;
-
-const TypingCard = styled.div`
-  width: 100%;
-  background-color: #ffffff;
-  border: 1px solid ${({ theme }) => theme.colors.dividerSoft};
-  border-radius: 20px;
-  padding: 24px 32px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
-`;
-
-const CardHeader = styled.div`
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
-`;
-
-const CardTitle = styled.span`
-  font-size: 12px;
-  font-weight: 600;
-  color: ${({ theme }) => theme.colors.ash};
-`;
-
-const ProgressBadge = styled.span`
-  font-size: 12px;
-  font-weight: 700;
-  color: ${({ theme }) => theme.colors.primary};
-`;
-
-const LyricsArea = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-height: 220px;
-  justify-content: center;
-`;
-
-const FadedLine = styled.p`
-  font-size: 18px;
-  font-weight: 500;
-  color: #cbd5e1;
-  text-align: left;
-  padding-left: 16px;
-`;
-
-const CurrentLineBox = styled.div`
-  position: relative;
-  padding: 16px;
-  background-color: #eff6ff;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-`;
-
-const AccentBar = styled.div`
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  background-color: ${({ theme }) => theme.colors.primary};
-  border-top-left-radius: 12px;
-  border-bottom-left-radius: 12px;
-`;
-
-const TargetText = styled.p`
-  font-size: 24px;
-  font-weight: 800;
-  letter-spacing: -0.5px;
-  line-height: 1.4;
-  font-family: monospace, sans-serif;
-`;
-
-const InputWrapper = styled.div`
-  width: 100%;
-  margin-top: 20px;
-  position: relative;
-  display: flex;
-  align-items: center;
-`;
-
-const HiddenInput = styled.input`
-  width: 100%;
-  padding: 18px 24px;
-  background-color: #ffffff;
-  border: 1px solid ${({ theme }) => theme.colors.hairlineStrong};
-  border-radius: 16px;
-  font-size: 16px;
-  color: ${({ theme }) => theme.colors.ink};
-  outline: none;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
-
-  &:focus {
-    border-color: ${({ theme }) => theme.colors.primary};
-    box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.1);
-  }
-
-  &::placeholder {
-    color: #cbd5e1;
-  }
-`;
-
-const StatusBadge = styled.div`
-  position: absolute;
-  right: 16px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  background-color: #f0fdf4;
-  border: 1px solid #bbf7d0;
-  border-radius: 20px;
-  font-size: 11px;
-  font-weight: 700;
-  color: #16a34a;
-`;
-
-const CheckIcon = styled.span`
-  font-size: 10px;
-`;
-
-const ShortcutNotice = styled.div`
-  margin-top: 16px;
-  font-size: 12px;
-  color: ${({ theme }) => theme.colors.ash};
-  display: flex;
-  align-items: center;
-  gap: 6px;
-`;
-
-const Kbd = styled.kbd`
-  padding: 2px 6px;
-  background-color: #ffffff;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 700;
-  color: ${({ theme }) => theme.colors.charcoal};
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.1);
-`;
-
-const CheerFloat = styled.div`
-  position: absolute;
-  font-size: 22px;
-  font-weight: 900;
-  color: ${({ theme }) => theme.colors.primary};
-  text-shadow: 0 2px 10px rgba(0, 102, 255, 0.3);
-  pointer-events: none;
-  animation: ${floatUp} 1.2s cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards;
-  white-space: nowrap;
-`;
-
-const Footer = styled.footer`
-  width: 100%;
-  border-top: 1px solid ${({ theme }) => theme.colors.dividerSoft};
-  padding: 20px 0;
-  margin-top: auto;
-  background-color: #ffffff;
-`;
-
-const FooterContainer = styled.div`
-  width: 100%;
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: 0 24px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-`;
-
-const FooterLogo = styled.img`
-  height: 18px;
-`;
-
-const FooterText = styled.span`
-  font-size: 11px;
-  color: ${({ theme }) => theme.colors.ash};
-`;
-
-const FooterLinks = styled.div`
-  display: flex;
-  gap: 16px;
-
-  a {
-    font-size: 11px;
-    color: ${({ theme }) => theme.colors.ash};
-  }
-`;
-
-// 4. Export Default
 export default TypingPracticePage;
