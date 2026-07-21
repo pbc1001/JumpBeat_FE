@@ -4,48 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import LogoSvg from '../assets/Logo.svg';
 import { ApiError, songApi } from '../api/client';
 import type { SongDetail } from '../api/types';
-
-type YouTubePlayer = {
-  getCurrentTime: () => number;
-  getDuration: () => number;
-  seekTo: (seconds: number, allowSeekAhead: boolean) => void;
-  destroy: () => void;
-};
-
-type YouTubeApi = {
-  Player: new (element: HTMLElement, options: {
-    videoId: string;
-    playerVars?: Record<string, number>;
-    events: { onReady: (event: { target: YouTubePlayer }) => void };
-  }) => YouTubePlayer;
-};
-
-declare global {
-  interface Window {
-    YT?: YouTubeApi;
-    onYouTubeIframeAPIReady?: () => void;
-  }
-}
-
-let youTubeApiPromise: Promise<YouTubeApi> | null = null;
-const loadYouTubeApi = () => {
-  if (window.YT?.Player) return Promise.resolve(window.YT);
-  if (!youTubeApiPromise) {
-    youTubeApiPromise = new Promise((resolve) => {
-      const previousCallback = window.onYouTubeIframeAPIReady;
-      window.onYouTubeIframeAPIReady = () => {
-        previousCallback?.();
-        if (window.YT) resolve(window.YT);
-      };
-      if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
-        const script = document.createElement('script');
-        script.src = 'https://www.youtube.com/iframe_api';
-        document.head.appendChild(script);
-      }
-    });
-  }
-  return youTubeApiPromise;
-};
+import { loadYouTubeApi, type YouTubePlayer } from '../youtubePlayer';
 
 const formatTime = (milliseconds: number | null) => {
   if (milliseconds === null) return '--:--.---';

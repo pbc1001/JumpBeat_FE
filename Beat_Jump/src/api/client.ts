@@ -152,6 +152,7 @@ export const songApi = {
     query.set('limit', String(params.limit ?? 12));
     return apiRequest<SongList>(`/songs?${query.toString()}`);
   },
+  getSong: (songId: string) => apiRequest<SongDetail>(`/songs/${songId}`),
   getDuplicates: (title: string, artist?: string) => {
     const query = new URLSearchParams({ title });
     if (artist) query.set('artist', artist);
