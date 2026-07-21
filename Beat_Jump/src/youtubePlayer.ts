@@ -11,7 +11,10 @@ type YouTubeApi = {
   Player: new (element: HTMLElement, options: {
     videoId: string;
     playerVars?: Record<string, number>;
-    events: { onReady: (event: { target: YouTubePlayer }) => void };
+    events: {
+      onReady: (event: { target: YouTubePlayer }) => void;
+      onError?: (event: { data: number }) => void;
+    };
   }) => YouTubePlayer;
 };
 

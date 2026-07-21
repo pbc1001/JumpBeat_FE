@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom';
+import { Navigate, Routes, Route } from 'react-router-dom';
 import LoginPage from './pages/Login';
 import SignUpPage from './pages/SignUp';
 import MainPage from './pages/MainPage';
@@ -28,6 +28,7 @@ export default function App() {
         <Route path="/result" element={<GameResultPage />} />
         <Route path="/typing" element={<TypingPracticePage />} />
       </Route>
+      <Route path="*" element={<Navigate to="/main" replace />} />
     </Routes>
   );
 }

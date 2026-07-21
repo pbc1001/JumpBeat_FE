@@ -48,8 +48,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setUser(await authApi.signup({ nickname, email, password }));
       },
       logout: async () => {
-        await authApi.logout();
-        setUser(null);
+        try {
+          await authApi.logout();
+        } finally {
+          setUser(null);
+        }
       },
     }),
     [isLoading, user],

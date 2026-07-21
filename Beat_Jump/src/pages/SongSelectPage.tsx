@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import styled from '@emotion/styled';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import LogoSvg from '../assets/Logo.svg';
 import { ApiError, songApi } from '../api/client';
 import type { SongDifficulty, SongLanguage, SongSummary } from '../api/types';
@@ -35,8 +35,9 @@ const difficultyColor: Record<SongDifficulty, string> = {
 
 const SongSelectPage = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, logout } = useAuth();
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() => searchParams.get('q') ?? '');
   const [language, setLanguage] = useState<SongLanguage>();
   const [difficulty, setDifficulty] = useState<SongDifficulty>();
   const [songs, setSongs] = useState<SongSummary[]>([]);

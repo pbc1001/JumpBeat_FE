@@ -20,6 +20,7 @@ const SyncEditorPage = () => {
   const songId = searchParams.get('songId');
   const playerHostRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YouTubePlayer | null>(null);
+  const activeLineRef = useRef<HTMLDivElement | null>(null);
   const [song, setSong] = useState<SongDetail | null>(null);
   const [times, setTimes] = useState<Record<string, number | null>>({});
   const [durationMs, setDurationMs] = useState(0);
@@ -27,6 +28,7 @@ const SyncEditorPage = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
   const [savedMessage, setSavedMessage] = useState('');
+  const [activeIndex, setActiveIndex] = useState(0);
 
   useEffect(() => {
     if (!songId) {
@@ -39,6 +41,8 @@ const SyncEditorPage = () => {
         setSong(draft);
         setDurationMs(draft.durationMs ?? 0);
         setTimes(Object.fromEntries(draft.lyrics.map((line) => [line.id, line.startTimeMs])));
+        const firstEmptyIndex = draft.lyrics.findIndex((line) => line.startTimeMs === null);
+        setActiveIndex(firstEmptyIndex < 0 ? Math.max(0, draft.lyrics.length - 1) : firstEmptyIndex);
       })
       .catch((requestError) => {
         if (active) setError(requestError instanceof ApiError ? requestError.message : '곡 초안을 불러오지 못했습니다.');
@@ -62,6 +66,7 @@ const SyncEditorPage = () => {
             const videoDuration = Math.round(target.getDuration() * 1000);
             if (videoDuration > 0) setDurationMs(videoDuration);
           },
+          onError: () => setError('이 영상은 외부 재생이 제한되어 있습니다. YouTube에서 시간을 확인한 뒤 아래에 직접 입력할 수 있습니다.'),
         },
       });
     });
@@ -82,6 +87,51 @@ const SyncEditorPage = () => {
     setSavedMessage('');
     setTimes((current) => ({ ...current, [lineId]: Math.round(player.getCurrentTime() * 1000) }));
   };
+
+  useEffect(() => {
+    activeLineRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [activeIndex]);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.matches('input, textarea, select')) return;
+      const player = playerRef.current;
+      if (!song || !player) return;
+
+      if (event.code === 'Space') {
+        event.preventDefault();
+        const line = song.lyrics[activeIndex];
+        if (!line) return;
+        const currentTimeMs = Math.round(player.getCurrentTime() * 1000);
+        const previousTime = activeIndex > 0 ? times[song.lyrics[activeIndex - 1].id] : null;
+        if (previousTime !== null && previousTime !== undefined && currentTimeMs <= previousTime) {
+          setError('현재 시간은 이전 가사 시간보다 뒤여야 합니다.');
+          return;
+        }
+        setError('');
+        setSavedMessage('');
+        setTimes((current) => ({ ...current, [line.id]: currentTimeMs }));
+        setActiveIndex((current) => Math.min(current + 1, song.lyrics.length - 1));
+      }
+
+      if (event.code === 'Backspace' && activeIndex > 0) {
+        event.preventDefault();
+        const previousIndex = activeIndex - 1;
+        const previousLine = song.lyrics[previousIndex];
+        setTimes((current) => ({ ...current, [previousLine.id]: null }));
+        setActiveIndex(previousIndex);
+      }
+
+      if (event.code === 'ArrowLeft' || event.code === 'ArrowRight') {
+        event.preventDefault();
+        const offset = event.code === 'ArrowLeft' ? -3 : 3;
+        player.seekTo(Math.max(0, player.getCurrentTime() + offset), true);
+      }
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, [activeIndex, song, times]);
 
   const validateTimeline = () => {
     if (!song || durationMs <= 0) return '영상이 준비되지 않았습니다.';
@@ -148,10 +198,22 @@ const SyncEditorPage = () => {
           <Subtitle>{song.artist}</Subtitle>
           <VideoContainer><PlayerHost ref={playerHostRef} /></VideoContainer>
           <Guide>
-            영상을 재생한 뒤 가사가 시작되는 순간 해당 줄의 <strong>현재 시간 기록</strong>을 누르세요.
-            잘못 기록한 줄은 다시 누르면 덮어쓸 수 있습니다.
+            영상을 재생하고 가사가 시작되는 순간 <strong>Space</strong>를 누르세요. 기록 후 다음 줄로 자동 이동합니다.<br />
+            <strong>Backspace</strong> 직전 기록 취소 · <strong>← / →</strong> 영상 3초 이동
           </Guide>
-          <Duration>영상 길이: {durationMs > 0 ? formatTime(durationMs) : '확인 중...'}</Duration>
+          <DurationControl>
+            <label htmlFor="video-duration">영상 길이(초)</label>
+            <input
+              id="video-duration"
+              type="number"
+              min="1"
+              step="0.001"
+              value={durationMs > 0 ? durationMs / 1000 : ''}
+              placeholder="자동 확인 실패 시 직접 입력"
+              onChange={(event) => setDurationMs(event.target.value === '' ? 0 : Math.round(Number(event.target.value) * 1000))}
+            />
+            <span>{durationMs > 0 ? formatTime(durationMs) : '영상 재생이 제한되면 직접 입력해 주세요.'}</span>
+          </DurationControl>
         </LeftPane>
 
         <RightPane>
@@ -167,7 +229,13 @@ const SyncEditorPage = () => {
             {song.lyrics.map((line, index) => {
               const time = times[line.id] ?? null;
               return (
-                <TimelineItem key={line.id} $synced={time !== null}>
+                <TimelineItem
+                  key={line.id}
+                  ref={index === activeIndex ? activeLineRef : undefined}
+                  $synced={time !== null}
+                  $active={index === activeIndex}
+                  onClick={() => setActiveIndex(index)}
+                >
                   <LineNumber>{index + 1}</LineNumber>
                   <LineContent>
                     <LyricText>{line.text}</LyricText>
@@ -182,7 +250,7 @@ const SyncEditorPage = () => {
                         value={time === null ? '' : time / 1000}
                         onChange={(event) => setTimes((current) => ({ ...current, [line.id]: event.target.value === '' ? null : Math.round(Number(event.target.value) * 1000) }))}
                       />
-                      <RecordButton type="button" onClick={() => setCurrentTime(line.id)}>현재 시간 기록</RecordButton>
+                      <RecordButton type="button" onClick={() => { setCurrentTime(line.id); setActiveIndex(Math.min(index + 1, song.lyrics.length - 1)); }}>현재 시간 기록</RecordButton>
                     </TimeControls>
                   </LineContent>
                 </TimelineItem>
@@ -213,7 +281,7 @@ const Subtitle = styled.p`margin: 5px 0 24px; color: ${({ theme }) => theme.colo
 const VideoContainer = styled.div`aspect-ratio: 16 / 9; overflow: hidden; border-radius: 14px; background: #0f172a; box-shadow: 0 14px 34px rgba(0,0,0,.14);`;
 const PlayerHost = styled.div`width: 100%; height: 100%; iframe { width: 100%; height: 100%; }`;
 const Guide = styled.p`margin-top: 22px; padding: 15px; border-radius: 10px; background: #eff6ff; color: #334155; font-size: 13px; line-height: 1.65;`;
-const Duration = styled.p`margin-top: 12px; font-size: 12px; color: ${({ theme }) => theme.colors.mute};`;
+const DurationControl = styled.div`margin-top:14px;display:grid;grid-template-columns:auto 1fr;align-items:center;gap:7px 10px;font-size:12px;color:${({theme})=>theme.colors.mute};input{height:34px;padding:0 9px;border:1px solid #cbd5e1;border-radius:7px;}span{grid-column:1/-1;font-size:11px;color:#94a3b8;}`;
 const RightPane = styled.section`padding: 34px; min-width: 0; @media (max-width: 600px) { padding: 22px; }`;
 const TimelineHeader = styled.div`display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;`;
 const TimelineTitle = styled.h2`font-size: 21px; font-weight: 800;`;
@@ -222,7 +290,7 @@ const SaveButton = styled.button`padding: 9px 15px; border: 1px solid ${({ theme
 const ErrorMessage = styled.div`padding: 11px 13px; margin-bottom: 14px; border-radius: 8px; color: #b91c1c; background: #fef2f2; font-size: 12px;`;
 const SuccessMessage = styled.div`padding: 11px 13px; margin-bottom: 14px; border-radius: 8px; color: #15803d; background: #f0fdf4; font-size: 12px;`;
 const TimelineList = styled.div`display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 230px); overflow: auto; padding-right: 4px;`;
-const TimelineItem = styled.div<{ $synced: boolean }>`display: flex; gap: 12px; padding: 14px; border: 1px solid ${({ $synced }) => $synced ? '#bfdbfe' : '#e2e8f0'}; border-radius: 11px; background: ${({ $synced }) => $synced ? '#f8fbff' : '#fff'};`;
+const TimelineItem = styled.div<{ $synced: boolean; $active: boolean }>`display:flex;gap:12px;padding:14px;border:2px solid ${({$active,$synced})=>$active?'#0066ff':$synced?'#bfdbfe':'#e2e8f0'};border-radius:11px;background:${({$active,$synced})=>$active?'#eff6ff':$synced?'#f8fbff':'#fff'};cursor:pointer;transition:.15s;`;
 const LineNumber = styled.span`width: 24px; height: 24px; display: grid; place-items: center; flex-shrink: 0; border-radius: 50%; background: #f1f5f9; color: #64748b; font-size: 11px; font-weight: 700;`;
 const LineContent = styled.div`flex: 1; min-width: 0;`;
 const LyricText = styled.p`font-size: 14px; line-height: 1.45; word-break: break-word;`;
