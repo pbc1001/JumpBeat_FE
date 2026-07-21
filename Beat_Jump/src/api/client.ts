@@ -3,6 +3,9 @@ import type {
   ApiErrorResponse,
   ApiResponse,
   AuthResponse,
+  SongDifficulty,
+  SongLanguage,
+  SongList,
   User,
 } from './types';
 
@@ -129,4 +132,22 @@ export const authApi = {
   },
 
   getMe: () => apiRequest<User>('/users/me'),
+};
+
+export const songApi = {
+  getSongs: (params: {
+    q?: string;
+    language?: SongLanguage;
+    difficulty?: SongDifficulty;
+    cursor?: string;
+    limit?: number;
+  } = {}) => {
+    const query = new URLSearchParams();
+    if (params.q) query.set('q', params.q);
+    if (params.language) query.set('language', params.language);
+    if (params.difficulty) query.set('difficulty', params.difficulty);
+    if (params.cursor) query.set('cursor', params.cursor);
+    query.set('limit', String(params.limit ?? 12));
+    return apiRequest<SongList>(`/songs?${query.toString()}`);
+  },
 };

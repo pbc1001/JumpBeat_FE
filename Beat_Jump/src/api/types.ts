@@ -24,3 +24,24 @@ export type ApiErrorResponse = {
     details?: unknown;
   };
 };
+
+export type SongLanguage = 'KOREAN' | 'ENGLISH' | 'JAPANESE' | 'OTHER';
+export type SongDifficulty = 'EASY' | 'NORMAL' | 'HARD';
+
+export type SongSummary = {
+  id: string;
+  title: string;
+  artist: string;
+  youtubeVideoId: string;
+  language: SongLanguage;
+  difficulty: SongDifficulty;
+  lyricLineCount: number;
+  playCount: number;
+  creator: { id: string; nickname: string };
+  publishedAt: string;
+};
+
+export type SongList = {
+  items: SongSummary[];
+  nextCursor: string | null;
+};
