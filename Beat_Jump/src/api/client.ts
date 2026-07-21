@@ -3,7 +3,9 @@ import type {
   ApiErrorResponse,
   ApiResponse,
   AuthResponse,
+  DuplicateSongs,
   SongDifficulty,
+  SongDetail,
   SongLanguage,
   SongList,
   User,
@@ -150,4 +152,21 @@ export const songApi = {
     query.set('limit', String(params.limit ?? 12));
     return apiRequest<SongList>(`/songs?${query.toString()}`);
   },
+  getDuplicates: (title: string, artist?: string) => {
+    const query = new URLSearchParams({ title });
+    if (artist) query.set('artist', artist);
+    return apiRequest<DuplicateSongs>(`/songs/duplicates?${query.toString()}`);
+  },
+  createDraft: (request: {
+    title: string;
+    artist: string;
+    youtubeUrl: string;
+    language: SongLanguage;
+    difficulty: SongDifficulty;
+    lyricsText: string;
+    confirmedDuplicate: boolean;
+  }) => apiRequest<SongDetail>('/songs/drafts', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  }),
 };

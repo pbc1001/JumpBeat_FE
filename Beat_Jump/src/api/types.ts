@@ -25,7 +25,7 @@ export type ApiErrorResponse = {
   };
 };
 
-export type SongLanguage = 'KOREAN' | 'ENGLISH' | 'JAPANESE' | 'OTHER';
+export type SongLanguage = 'KO' | 'EN' | 'JA' | 'OTHER';
 export type SongDifficulty = 'EASY' | 'NORMAL' | 'HARD';
 
 export type SongSummary = {
@@ -45,3 +45,25 @@ export type SongList = {
   items: SongSummary[];
   nextCursor: string | null;
 };
+
+export type LyricLine = {
+  id: string;
+  lineOrder: number;
+  text: string;
+  startTimeMs: number | null;
+};
+
+export type SongDetail = {
+  id: string;
+  title: string;
+  artist: string;
+  youtubeVideoId: string;
+  language: SongLanguage;
+  difficulty: SongDifficulty;
+  status: 'DRAFT' | 'PUBLISHED';
+  durationMs: number | null;
+  lyrics: LyricLine[];
+};
+
+export type DuplicateSong = Pick<SongSummary, 'id' | 'title' | 'artist' | 'youtubeVideoId'>;
+export type DuplicateSongs = { hasDuplicates: boolean; items: DuplicateSong[] };

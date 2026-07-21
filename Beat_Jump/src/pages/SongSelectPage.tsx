@@ -8,9 +8,9 @@ import { useAuth } from '../auth/useAuth';
 
 const languages: Array<{ label: string; value?: SongLanguage }> = [
   { label: '전체' },
-  { label: '한국어', value: 'KOREAN' },
-  { label: '영어', value: 'ENGLISH' },
-  { label: '일본어', value: 'JAPANESE' },
+  { label: '한국어', value: 'KO' },
+  { label: '영어', value: 'EN' },
+  { label: '일본어', value: 'JA' },
   { label: '기타', value: 'OTHER' },
 ];
 
