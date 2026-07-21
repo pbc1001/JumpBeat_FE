@@ -1,14 +1,34 @@
 import React, { useState } from 'react';
 import styled from '@emotion/styled';
 import LogoSvg from '../assets/Logo.svg';
+import { Link, useNavigate } from 'react-router-dom';
+import { ApiError } from '../api/client';
+import { useAuth } from '../auth/useAuth';
 
 const LoginPage = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { login } = useAuth();
+  const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log({ email, password });
+    setError('');
+    setIsSubmitting(true);
+    try {
+      await login(email, password);
+      navigate('/main', { replace: true });
+    } catch (requestError) {
+      setError(
+        requestError instanceof ApiError
+          ? requestError.message
+          : '서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.',
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -55,8 +75,10 @@ const LoginPage = () => {
 
             <ForgotPassword href="#find-password">비밀번호 찾기</ForgotPassword>
 
-            <SubmitButton type="submit">
-              로그인
+            {error && <FormError role="alert">{error}</FormError>}
+
+            <SubmitButton type="submit" disabled={isSubmitting}>
+              {isSubmitting ? '로그인 중...' : '로그인'}
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <line x1="5" y1="12" x2="19" y2="12" />
                 <polyline points="12 5 19 12 12 19" />
@@ -70,13 +92,13 @@ const LoginPage = () => {
 
           <SocialGroup>
             {/* 카카오 */}
-            <SocialButton bg="#FEE500" aria-label="Kakao Login">
+            <SocialButton type="button" bg="#FEE500" aria-label="Kakao Login">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="#191919">
                 <path d="M12 3c-4.97 0-9 3.185-9 7.115 0 2.557 1.707 4.8 4.27 6.054-.188.702-.682 2.545-.78 2.94-.122.49.18.483.377.352.155-.103 2.466-1.675 3.464-2.355.54.08 1.097.124 1.669.124 4.97 0 9-3.186 9-7.115S16.97 3 12 3z" />
               </svg>
             </SocialButton>
             {/* 구글 */}
-            <SocialButton bg="#ffffff" aria-label="Google Login">
+            <SocialButton type="button" bg="#ffffff" aria-label="Google Login">
               <svg width="20" height="20" viewBox="0 0 24 24">
                 <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
                 <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
@@ -89,7 +111,7 @@ const LoginPage = () => {
 
         <SignUpText>
           아직 회원이 아니신가요?
-          <a href="signup">회원가입 하기</a>
+          <Link to="/signup">회원가입 하기</Link>
         </SignUpText>
       </MainContent>
 
@@ -280,6 +302,18 @@ const SubmitButton = styled.button`
   &:hover {
     opacity: 0.92;
   }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+`;
+
+const FormError = styled.p`
+  margin: -4px 0 0;
+  color: #ef4444;
+  font-size: 13px;
+  line-height: 1.4;
 `;
 
 const Divider = styled.div`

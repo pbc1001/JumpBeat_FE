@@ -1,5 +1,4 @@
 // 1. Import 문
-import React from 'react';
 import styled from '@emotion/styled';
 import LogoSvg from '../assets/Logo.svg';
 

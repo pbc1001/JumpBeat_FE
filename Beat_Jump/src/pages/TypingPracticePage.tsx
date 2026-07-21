@@ -22,7 +22,7 @@ const TypingPracticePage = () => {
   
   // 실시간 스탯
   const [wpm, setWpm] = useState<number>(84);
-  const [accuracy, setAccuracy] = useState<number>(98.2);
+  const [accuracy] = useState<number>(98.2);
   const [combo, setCombo] = useState<number>(142);
   const [isBgVideoOn, setIsBgVideoOn] = useState<boolean>(true);
 
