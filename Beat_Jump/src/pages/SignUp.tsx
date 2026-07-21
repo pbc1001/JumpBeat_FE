@@ -2,6 +2,9 @@
 import React, { useState } from 'react';
 import styled from '@emotion/styled';
 import LogoSvg from '../assets/Logo.svg';
+import { Link, useNavigate } from 'react-router-dom';
+import { ApiError } from '../api/client';
+import { useAuth } from '../auth/useAuth';
 
 // 2. 컴포넌트 로직
 const SignUpPage = () => {
@@ -10,10 +13,36 @@ const SignUpPage = () => {
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [agreed, setAgreed] = useState(false);
+  const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { signup } = useAuth();
+  const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log({ nickname, email, password, passwordConfirm, agreed });
+    setError('');
+    if (password !== passwordConfirm) {
+      setError('비밀번호 확인이 일치하지 않습니다.');
+      return;
+    }
+    if (!agreed) {
+      setError('이용약관과 개인정보 처리방침에 동의해 주세요.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await signup(nickname, email, password);
+      navigate('/main', { replace: true });
+    } catch (requestError) {
+      setError(
+        requestError instanceof ApiError
+          ? requestError.message
+          : '서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.',
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -106,8 +135,10 @@ const SignUpPage = () => {
               </CheckboxText>
             </CheckboxLabel>
 
-            <SubmitButton type="submit">
-              시작하기
+            {error && <FormError role="alert">{error}</FormError>}
+
+            <SubmitButton type="submit" disabled={isSubmitting}>
+              {isSubmitting ? '가입 중...' : '시작하기'}
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z" />
                 <path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-3.05 11a22.35 22.35 0 0 1-3.95 2z" />
@@ -116,7 +147,7 @@ const SignUpPage = () => {
           </Form>
 
           <LoginLinkText>
-            이미 계정이 있으신가요? <a href="#login">로그인</a>
+            이미 계정이 있으신가요? <Link to="/">로그인</Link>
           </LoginLinkText>
         </Card>
       </MainContent>
@@ -333,6 +364,18 @@ const SubmitButton = styled.button`
   &:hover {
     opacity: 0.92;
   }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+`;
+
+const FormError = styled.p`
+  margin: -4px 0 0;
+  color: #ef4444;
+  font-size: 13px;
+  line-height: 1.4;
 `;
 
 const LoginLinkText = styled.p`
