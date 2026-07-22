@@ -267,7 +267,7 @@ const TypingPracticePage = () => {
               {line.text.split('').map((character, index) => <span key={index} data-state={index < input.length ? (input[index] === character ? 'correct' : 'wrong') : undefined}>{character}</span>)}
             </CurrentLine>
             <NextLine>{song.lyrics[currentIndex + 1]?.text ?? ''}</NextLine>
-            <TypingInput ref={inputRef} disabled={!isCurrentLineRequired} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={handleKeyDown} onBlur={() => { if (phase === 'PLAYING' && isCurrentLineRequired) window.setTimeout(() => inputRef.current?.focus(), 0); }} placeholder={isCurrentLineRequired ? '페이지 어디서든 가사를 입력하고 Enter를 누르세요' : '이 가사는 입력하지 않아도 됩니다'} autoComplete="off" />
+            <TypingInput key={currentIndex} ref={inputRef} disabled={!isCurrentLineRequired} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={handleKeyDown} onBlur={() => { if (phase === 'PLAYING' && isCurrentLineRequired) window.setTimeout(() => inputRef.current?.focus(), 0); }} placeholder={isCurrentLineRequired ? '페이지 어디서든 가사를 입력하고 Enter를 누르세요' : '이 가사는 입력하지 않아도 됩니다'} autoComplete="off" />
             <Feedback $bad={feedback !== 'PERFECT!'}>{feedback}</Feedback>
           </PlayArea>
         )}
