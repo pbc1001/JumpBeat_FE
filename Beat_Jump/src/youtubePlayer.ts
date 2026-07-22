@@ -2,6 +2,7 @@ export type YouTubePlayer = {
   getCurrentTime: () => number;
   getDuration: () => number;
   seekTo: (seconds: number, allowSeekAhead: boolean) => void;
+  loadVideoById: (videoId: string, startSeconds?: number) => void;
   playVideo: () => void;
   pauseVideo: () => void;
   destroy: () => void;
@@ -14,6 +15,7 @@ type YouTubeApi = {
     events: {
       onReady: (event: { target: YouTubePlayer }) => void;
       onError?: (event: { data: number }) => void;
+      onStateChange?: (event: { data: number }) => void;
     };
   }) => YouTubePlayer;
 };

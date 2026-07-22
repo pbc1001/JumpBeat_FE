@@ -28,6 +28,9 @@ const TypingPracticePage = () => {
   const startedAtRef = useRef(0);
   const judgedIndexRef = useRef<number | null>(null);
   const lineStartedRef = useRef(false);
+  const phaseRef = useRef<'SETUP' | 'PLAYING'>('SETUP');
+  const finishRef = useRef<(finalStats: GameStats, endedEarly: boolean) => void>(() => undefined);
+  const hasFinishedRef = useRef(false);
   const judgeRef = useRef<(result: keyof GameStats) => void>(() => undefined);
   const [song, setSong] = useState<SongDetail | null>(null);
   const [mode, setMode] = useState<GameMode>('CONTINUE');
@@ -72,6 +75,9 @@ const TypingPracticePage = () => {
             setIsPlayerReady(false);
             setError('이 영상은 외부 재생이 제한되어 게임을 시작할 수 없습니다. 다른 영상으로 등록해 주세요.');
           },
+          onStateChange: ({ data }) => {
+            if (data === 0 && phaseRef.current === 'PLAYING') finishRef.current(statsRef.current, false);
+          },
         },
       });
     });
@@ -79,6 +85,8 @@ const TypingPracticePage = () => {
   }, [song]);
 
   const finish = (finalStats: GameStats, endedEarly: boolean) => {
+    if (hasFinishedRef.current) return;
+    hasFinishedRef.current = true;
     playerRef.current?.pauseVideo();
     const processed = finalStats.correct + finalStats.wrong + finalStats.miss;
     navigate('/result', {
@@ -99,6 +107,11 @@ const TypingPracticePage = () => {
       },
     });
   };
+
+  useEffect(() => {
+    phaseRef.current = phase;
+    finishRef.current = finish;
+  });
 
   const isRequiredLine = (text: string) => lyricScope === 'ALL' || detectLyricLanguage(text) === lyricScope;
 
@@ -177,11 +190,11 @@ const TypingPracticePage = () => {
     indexRef.current = 0;
     judgedIndexRef.current = null;
     lineStartedRef.current = false;
+    hasFinishedRef.current = false;
     statsRef.current = { correct: 0, wrong: 0, miss: 0 };
     setCurrentIndex(0); setStats(statsRef.current); setError(''); setPhase('PLAYING');
     startedAtRef.current = Date.now();
-    playerRef.current.seekTo(0, true);
-    playerRef.current.playVideo();
+    playerRef.current.loadVideoById(song.youtubeVideoId, 0);
     window.setTimeout(() => inputRef.current?.focus(), 0);
   };
 
