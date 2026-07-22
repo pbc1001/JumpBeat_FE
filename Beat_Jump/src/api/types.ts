@@ -67,3 +67,16 @@ export type SongDetail = {
 
 export type DuplicateSong = Pick<SongSummary, 'id' | 'title' | 'artist' | 'youtubeVideoId'>;
 export type DuplicateSongs = { hasDuplicates: boolean; items: DuplicateSong[] };
+
+export type GameResultInput = {
+  songId: string;
+  mode: 'CONTINUE' | 'SURVIVAL';
+  correctCount: number;
+  wrongCount: number;
+  missCount: number;
+  totalCount: number;
+  playTimeMs: number;
+};
+
+export type RankingEntry = { rank: number; nickname: string };
+export type SongRanking = { songId: string; rankings: RankingEntry[] };

@@ -4,6 +4,8 @@ import type {
   ApiResponse,
   AuthResponse,
   DuplicateSongs,
+  GameResultInput,
+  SongRanking,
   SongDifficulty,
   SongDetail,
   SongLanguage,
@@ -184,4 +186,12 @@ export const songApi = {
   deleteSong: (songId: string) => apiRequest<void>(`/songs/${songId}`, {
     method: 'DELETE',
   }),
+};
+
+export const gameResultApi = {
+  create: (request: GameResultInput) => apiRequest<{ id: string; score: number; accuracy: number }>('/game-results', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  }),
+  getRanking: (songId: string) => apiRequest<SongRanking>(`/songs/${songId}/ranking`),
 };

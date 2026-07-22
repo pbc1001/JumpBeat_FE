@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import styled from '@emotion/styled';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ApiError, songApi } from '../api/client';
-import type { SongDetail } from '../api/types';
+import { ApiError, gameResultApi, songApi } from '../api/client';
+import type { RankingEntry, SongDetail } from '../api/types';
 import { loadYouTubeApi, type YouTubePlayer } from '../youtubePlayer';
 
 type GameMode = 'CONTINUE' | 'FAIL_FAST';
@@ -34,6 +34,7 @@ const TypingPracticePage = () => {
   const hasFinishedRef = useRef(false);
   const judgeRef = useRef<(result: keyof GameStats) => void>(() => undefined);
   const [song, setSong] = useState<SongDetail | null>(null);
+  const [ranking, setRanking] = useState<RankingEntry[]>([]);
   const [mode, setMode] = useState<GameMode>('CONTINUE');
   const [lyricScope, setLyricScope] = useState<LyricScope>('ALL');
   const [phase, setPhase] = useState<'SETUP' | 'PLAYING'>('SETUP');
@@ -58,6 +59,9 @@ const TypingPracticePage = () => {
       .then((data) => { if (active) setSong(data); })
       .catch((requestError) => { if (active) setError(requestError instanceof ApiError ? requestError.message : '곡을 불러오지 못했습니다.'); })
       .finally(() => { if (active) setIsLoading(false); });
+    gameResultApi.getRanking(songId)
+      .then((data) => { if (active) setRanking(data.rankings); })
+      .catch(() => { if (active) setRanking([]); });
     return () => { active = false; };
   }, [songId]);
 
@@ -97,6 +101,7 @@ const TypingPracticePage = () => {
         title: song?.title,
         artist: song?.artist,
         difficulty: song?.difficulty,
+        mode,
         score: finalStats.correct * 100,
         accuracy: processed ? Math.round((finalStats.correct / processed) * 100) : 0,
         correct: finalStats.correct,
@@ -287,6 +292,12 @@ const TypingPracticePage = () => {
               <ScopeButton type="button" $active={lyricScope === 'ENGLISH'} onClick={() => setLyricScope('ENGLISH')}>영어 <span>{song.lyrics.filter((line) => detectLyricLanguage(line.text) === 'ENGLISH').length}</span></ScopeButton>
             </ScopeGroup>
             {gameLyrics.length === 0 && <ScopeWarning>선택한 언어에 해당하는 가사가 없습니다.</ScopeWarning>}
+            <RankingPanel>
+              <strong>TOP 3</strong>
+              {ranking.length === 0 ? <span>아직 기록이 없습니다.</span> : ranking.map((entry) => (
+                <span key={entry.rank}>{entry.rank}. {entry.nickname}</span>
+              ))}
+            </RankingPanel>
             {error && <ErrorMessage>{error}</ErrorMessage>}
             <StartButton type="button" disabled={!isPlayerReady || gameLyrics.length === 0} onClick={startGame}>{isPlayerReady ? '게임 시작' : '영상 준비 중...'}</StartButton>
           </SetupCard>
@@ -322,6 +333,7 @@ const ScopeTitle = styled.h2`margin-top:8px;font-size:13px;font-weight:800;color
 const ScopeGroup = styled.div`display:grid;grid-template-columns:repeat(3,1fr);gap:8px;`;
 const ScopeButton = styled.button<{ $active:boolean }>`padding:10px 6px;border:1px solid ${({$active})=>$active?'#60a5fa':'rgba(255,255,255,.25)'};border-radius:9px;background:${({$active})=>$active?'rgba(37,99,235,.35)':'rgba(255,255,255,.08)'};color:#fff;font-size:12px;font-weight:700;span{margin-left:3px;color:#bfdbfe;font-size:10px;}`;
 const ScopeWarning = styled.p`padding:9px;border-radius:7px;background:rgba(239,68,68,.18);color:#fecaca;font-size:11px;`;
+const RankingPanel = styled.div`margin-top:4px;padding:12px 14px;border-radius:10px;background:rgba(255,255,255,.08);display:grid;grid-template-columns:auto repeat(3,1fr);gap:10px;color:#e2e8f0;font-size:11px;strong{color:#facc15;}span{text-align:center;}@media(max-width:520px){grid-template-columns:1fr;span{text-align:left;}}`;
 const StartButton = styled.button`margin-top:8px;padding:13px;border-radius:999px;background:#0066ff;color:#fff;font-weight:800;&:disabled{opacity:.5;cursor:not-allowed;}`;
 const ErrorMessage = styled.p`font-size:12px;color:#b91c1c;background:#fef2f2;padding:10px;border-radius:7px;`;
 const PlayArea = styled.section`width:min(760px,100%);position:relative;padding:42px 38px;border-radius:22px;background:rgba(15,23,42,.72);border:1px solid rgba(255,255,255,.2);backdrop-filter:blur(16px);box-shadow:0 24px 80px rgba(0,0,0,.38);text-align:center;@media(max-width:600px){padding:30px 20px;}`;

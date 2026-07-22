@@ -1,11 +1,15 @@
 import styled from '@emotion/styled';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { gameResultApi } from '../api/client';
+import type { RankingEntry } from '../api/types';
 
 type ResultState = {
   songId: string;
   title: string;
   artist: string;
   difficulty: string;
+  mode: 'CONTINUE' | 'FAIL_FAST';
   score: number;
   accuracy: number;
   correct: number;
@@ -25,6 +29,36 @@ const GameResultPage = () => {
   const navigate = useNavigate();
   const { state } = useLocation();
   const result = state as ResultState | null;
+  const savedRef = useRef(false);
+  const [ranking, setRanking] = useState<RankingEntry[]>([]);
+  const [rankingError, setRankingError] = useState('');
+
+  useEffect(() => {
+    if (!result || savedRef.current) return;
+    savedRef.current = true;
+    const saveAndLoadRanking = async () => {
+      try {
+        await gameResultApi.create({
+          songId: result.songId,
+          mode: result.mode === 'FAIL_FAST' ? 'SURVIVAL' : 'CONTINUE',
+          correctCount: result.correct,
+          wrongCount: result.wrong,
+          missCount: result.miss,
+          totalCount: result.total,
+          playTimeMs: result.elapsedMs,
+        });
+      } catch {
+        setRankingError('기록을 저장하지 못했습니다.');
+      }
+      try {
+        const data = await gameResultApi.getRanking(result.songId);
+        setRanking(data.rankings);
+      } catch {
+        setRankingError((current) => current || '랭킹을 불러오지 못했습니다.');
+      }
+    };
+    void saveAndLoadRanking();
+  }, [result]);
 
   if (!result) {
     return <Empty><p>표시할 게임 결과가 없습니다.</p><button type="button" onClick={() => navigate('/selectsong')}>곡 목록으로</button></Empty>;
@@ -47,6 +81,13 @@ const GameResultPage = () => {
         </StatsGrid>
 
         <Summary>{result.total}개 가사 중 {result.correct}개를 정확하게 입력했습니다.</Summary>
+        <RankingBox>
+          <strong>곡 랭킹 TOP 3</strong>
+          {ranking.length === 0 ? <span>아직 표시할 기록이 없습니다.</span> : ranking.map((entry) => (
+            <span key={entry.rank}>{entry.rank}. {entry.nickname}</span>
+          ))}
+          {rankingError && <small>{rankingError}</small>}
+        </RankingBox>
         <Actions>
           <SecondaryButton type="button" onClick={() => navigate('/selectsong')}>다른 곡 선택</SecondaryButton>
           <PrimaryButton type="button" onClick={() => navigate(`/typing?songId=${result.songId}`, { replace: true })}>다시 하기</PrimaryButton>
@@ -66,6 +107,7 @@ const Accuracy = styled.p`margin-top:3px;font-size:14px;color:#475569;`;
 const StatsGrid = styled.div`display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:30px;@media(max-width:520px){grid-template-columns:repeat(2,1fr);}`;
 const Stat = styled.div<{ $color:string }>`padding:16px 8px;border-radius:12px;background:#f8fafc;display:flex;flex-direction:column;gap:5px;strong{font-size:21px;color:${({$color})=>$color};}span{font-size:11px;color:#64748b;}`;
 const Summary = styled.p`margin-top:24px;font-size:13px;color:#64748b;`;
+const RankingBox = styled.div`margin-top:22px;padding:18px;border-radius:14px;background:#f8fafc;display:flex;flex-direction:column;gap:8px;strong{font-size:13px;color:#0f172a;}span{font-size:13px;color:#475569;}small{color:#b91c1c;font-size:11px;}`;
 const Actions = styled.div`display:flex;justify-content:center;gap:10px;margin-top:30px;`;
 const SecondaryButton = styled.button`padding:12px 20px;border:1px solid #cbd5e1;border-radius:999px;font-weight:700;color:#475569;`;
 const PrimaryButton = styled.button`padding:12px 24px;border-radius:999px;background:#0066ff;color:#fff;font-weight:800;`;
