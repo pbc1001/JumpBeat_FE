@@ -27,6 +27,7 @@ const TypingPracticePage = () => {
   const statsRef = useRef<GameStats>({ correct: 0, wrong: 0, miss: 0 });
   const startedAtRef = useRef(0);
   const judgedIndexRef = useRef<number | null>(null);
+  const lineStartedRef = useRef(false);
   const judgeRef = useRef<(result: keyof GameStats) => void>(() => undefined);
   const [song, setSong] = useState<SongDetail | null>(null);
   const [mode, setMode] = useState<GameMode>('CONTINUE');
@@ -110,6 +111,7 @@ const TypingPracticePage = () => {
     }
     indexRef.current += 1;
     judgedIndexRef.current = null;
+    lineStartedRef.current = false;
     setCurrentIndex(indexRef.current);
     setInput('');
   };
@@ -134,7 +136,9 @@ const TypingPracticePage = () => {
       }
       indexRef.current += 1;
       judgedIndexRef.current = null;
+      lineStartedRef.current = false;
       setCurrentIndex(indexRef.current);
+      setInput('');
     }
     window.setTimeout(() => setFeedback(''), 500);
   };
@@ -143,13 +147,22 @@ const TypingPracticePage = () => {
   });
 
   useEffect(() => {
+    if (phase === 'PLAYING' && currentIndex > 0) setInput('');
+  }, [currentIndex, phase]);
+
+  useEffect(() => {
     if (phase !== 'PLAYING' || !song) return;
     const timer = window.setInterval(() => {
       const player = playerRef.current;
       const line = song.lyrics[indexRef.current];
       if (!player || !line) return;
+      const nowMs = player.getCurrentTime() * 1000;
+      if (!lineStartedRef.current && nowMs >= (line.startTimeMs ?? 0)) {
+        lineStartedRef.current = true;
+        setInput('');
+      }
       const deadline = song.lyrics[indexRef.current + 1]?.startTimeMs ?? song.durationMs;
-      if (deadline !== null && player.getCurrentTime() * 1000 >= deadline) {
+      if (deadline !== null && nowMs >= deadline) {
         if (judgedIndexRef.current === indexRef.current) advanceWithoutScore();
         else if (isRequiredLine(line.text)) judge('miss', true);
         else advanceWithoutScore();
@@ -163,10 +176,11 @@ const TypingPracticePage = () => {
     if (gameLyrics.length === 0) { setError('선택한 언어에 해당하는 가사가 없습니다.'); return; }
     indexRef.current = 0;
     judgedIndexRef.current = null;
+    lineStartedRef.current = false;
     statsRef.current = { correct: 0, wrong: 0, miss: 0 };
     setCurrentIndex(0); setStats(statsRef.current); setError(''); setPhase('PLAYING');
     startedAtRef.current = Date.now();
-    playerRef.current.seekTo((song.lyrics[0].startTimeMs ?? 0) / 1000, true);
+    playerRef.current.seekTo(0, true);
     playerRef.current.playVideo();
     window.setTimeout(() => inputRef.current?.focus(), 0);
   };
