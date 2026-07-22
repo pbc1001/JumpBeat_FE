@@ -136,6 +136,7 @@ const TypingPracticePage = () => {
     const nextStats = { ...statsRef.current, [result]: statsRef.current[result] + 1 };
     statsRef.current = nextStats;
     setStats(nextStats);
+    setInput('');
     setFeedback(result === 'correct' ? 'PERFECT!' : result === 'wrong' ? 'WRONG!' : 'MISS!');
     const isLast = indexRef.current >= song.lyrics.length - 1;
     if (result !== 'correct' && mode === 'FAIL_FAST') {
@@ -170,6 +171,11 @@ const TypingPracticePage = () => {
       const line = song.lyrics[indexRef.current];
       if (!player || !line) return;
       const nowMs = player.getCurrentTime() * 1000;
+      const videoDurationMs = player.getDuration() * 1000;
+      if (videoDurationMs > 0 && nowMs >= videoDurationMs - 200) {
+        finish(statsRef.current, false);
+        return;
+      }
       if (!lineStartedRef.current && nowMs >= (line.startTimeMs ?? 0)) {
         lineStartedRef.current = true;
         setInput('');
