@@ -9,7 +9,7 @@ type GameMode = 'CONTINUE' | 'FAIL_FAST';
 type LyricScope = 'ALL' | 'KOREAN' | 'ENGLISH';
 type GameStats = { correct: number; wrong: number; miss: number };
 
-const normalize = (value: string) => value.trim().replace(/\s+/g, ' ');
+const normalize = (value: string) => value.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
 const detectLyricLanguage = (text: string) => {
   const koreanCount = (text.match(/[가-힣ㄱ-ㅎㅏ-ㅣ]/g) ?? []).length;
   const englishCount = (text.match(/[A-Za-z]/g) ?? []).length;
@@ -26,6 +26,7 @@ const TypingPracticePage = () => {
   const indexRef = useRef(0);
   const statsRef = useRef<GameStats>({ correct: 0, wrong: 0, miss: 0 });
   const startedAtRef = useRef(0);
+  const judgedIndexRef = useRef<number | null>(null);
   const judgeRef = useRef<(result: keyof GameStats) => void>(() => undefined);
   const [song, setSong] = useState<SongDetail | null>(null);
   const [mode, setMode] = useState<GameMode>('CONTINUE');
@@ -108,24 +109,33 @@ const TypingPracticePage = () => {
       return;
     }
     indexRef.current += 1;
+    judgedIndexRef.current = null;
     setCurrentIndex(indexRef.current);
     setInput('');
   };
 
-  const judge = (result: keyof GameStats) => {
+  const judge = (result: keyof GameStats, advanceImmediately = false) => {
     if (!song) return;
+    if (judgedIndexRef.current === indexRef.current) return;
+    judgedIndexRef.current = indexRef.current;
     const nextStats = { ...statsRef.current, [result]: statsRef.current[result] + 1 };
     statsRef.current = nextStats;
     setStats(nextStats);
-    setInput('');
     setFeedback(result === 'correct' ? 'PERFECT!' : result === 'wrong' ? 'WRONG!' : 'MISS!');
     const isLast = indexRef.current >= song.lyrics.length - 1;
-    if (isLast || (result !== 'correct' && mode === 'FAIL_FAST')) {
-      finish(nextStats, !isLast);
+    if (result !== 'correct' && mode === 'FAIL_FAST') {
+      finish(nextStats, true);
       return;
     }
-    indexRef.current += 1;
-    setCurrentIndex(indexRef.current);
+    if (advanceImmediately) {
+      if (isLast) {
+        finish(nextStats, false);
+        return;
+      }
+      indexRef.current += 1;
+      judgedIndexRef.current = null;
+      setCurrentIndex(indexRef.current);
+    }
     window.setTimeout(() => setFeedback(''), 500);
   };
   useEffect(() => {
@@ -140,7 +150,8 @@ const TypingPracticePage = () => {
       if (!player || !line) return;
       const deadline = song.lyrics[indexRef.current + 1]?.startTimeMs ?? song.durationMs;
       if (deadline !== null && player.getCurrentTime() * 1000 >= deadline) {
-        if (isRequiredLine(line.text)) judge('miss');
+        if (judgedIndexRef.current === indexRef.current) advanceWithoutScore();
+        else if (isRequiredLine(line.text)) judge('miss', true);
         else advanceWithoutScore();
       }
     }, 100);
@@ -151,6 +162,7 @@ const TypingPracticePage = () => {
     if (!song || !playerRef.current) { setError('영상 플레이어가 준비될 때까지 잠시 기다려 주세요.'); return; }
     if (gameLyrics.length === 0) { setError('선택한 언어에 해당하는 가사가 없습니다.'); return; }
     indexRef.current = 0;
+    judgedIndexRef.current = null;
     statsRef.current = { correct: 0, wrong: 0, miss: 0 };
     setCurrentIndex(0); setStats(statsRef.current); setError(''); setPhase('PLAYING');
     startedAtRef.current = Date.now();
