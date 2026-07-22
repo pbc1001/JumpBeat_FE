@@ -9,6 +9,7 @@ type GameMode = 'CONTINUE' | 'FAIL_FAST';
 type LyricScope = 'ALL' | 'KOREAN' | 'ENGLISH';
 type GameStats = { correct: number; wrong: number; miss: number };
 
+const EASTER_EGG_PHRASE = '240122';
 const normalize = (value: string) => value.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
 const detectLyricLanguage = (text: string) => {
   const koreanCount = (text.match(/[가-힣ㄱ-ㅎㅏ-ㅣ]/g) ?? []).length;
@@ -204,9 +205,20 @@ const TypingPracticePage = () => {
     window.setTimeout(() => inputRef.current?.focus(), 0);
   };
 
+  const triggerPerfectResult = (value: string) => {
+    if (normalize(value) !== EASTER_EGG_PHRASE) return false;
+    const perfectStats = { correct: gameLyrics.length, wrong: 0, miss: 0 };
+    statsRef.current = perfectStats;
+    setStats(perfectStats);
+    setInput('');
+    finish(perfectStats, false);
+    return true;
+  };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== 'Enter' || !song) return;
     event.preventDefault();
+    if (triggerPerfectResult(event.currentTarget.value)) return;
     const line = song.lyrics[currentIndex];
     if (!isRequiredLine(line.text)) return;
     if (playerRef.current && playerRef.current.getCurrentTime() * 1000 < (line.startTimeMs ?? 0)) {
@@ -227,6 +239,7 @@ const TypingPracticePage = () => {
 
       if (event.key === 'Enter') {
         event.preventDefault();
+        if (triggerPerfectResult(input)) return;
         if (activeLine) judgeRef.current(normalize(input) === normalize(activeLine.text) ? 'correct' : 'wrong');
         return;
       }

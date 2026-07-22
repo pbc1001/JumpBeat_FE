@@ -44,6 +44,7 @@ const SongSelectPage = () => {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [deletingSongId, setDeletingSongId] = useState<string | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -99,6 +100,21 @@ const SongSelectPage = () => {
   const handleLogout = async () => {
     await logout();
     navigate('/', { replace: true });
+  };
+
+  const handleDelete = async (song: SongSummary) => {
+    if (song.creator.id !== user?.id || deletingSongId) return;
+    if (!window.confirm(`'${song.title}' 곡을 삭제할까요? 삭제 후에는 목록에서 사라집니다.`)) return;
+    setDeletingSongId(song.id);
+    setError('');
+    try {
+      await songApi.deleteSong(song.id);
+      setSongs((current) => current.filter((item) => item.id !== song.id));
+    } catch (requestError) {
+      setError(requestError instanceof ApiError ? requestError.message : '곡을 삭제하지 못했습니다.');
+    } finally {
+      setDeletingSongId(null);
+    }
   };
 
   return (
@@ -182,21 +198,28 @@ const SongSelectPage = () => {
           ) : (
             <CardGrid>
               {songs.map((song) => (
-                <SongCard type="button" key={song.id} onClick={() => navigate(`/typing?songId=${song.id}`)}>
-                  <CoverWrapper>
-                    <CoverImg
-                      src={`https://i.ytimg.com/vi/${song.youtubeVideoId}/hqdefault.jpg`}
-                      alt={`${song.title} YouTube 미리보기`}
-                    />
-                  </CoverWrapper>
-                  <SongTitle>{song.title}</SongTitle>
-                  <ArtistName>{song.artist}</ArtistName>
-                  <CardMeta>
-                    <DifficultyBadge $color={difficultyColor[song.difficulty]}>
-                      ◆ {difficultyLabel[song.difficulty]}
-                    </DifficultyBadge>
-                    <LineCount>{song.lyricLineCount}줄</LineCount>
-                  </CardMeta>
+                <SongCard key={song.id}>
+                  <SongPlayButton type="button" onClick={() => navigate(`/typing?songId=${song.id}`)}>
+                    <CoverWrapper>
+                      <CoverImg
+                        src={`https://i.ytimg.com/vi/${song.youtubeVideoId}/hqdefault.jpg`}
+                        alt={`${song.title} YouTube 미리보기`}
+                      />
+                    </CoverWrapper>
+                    <SongTitle>{song.title}</SongTitle>
+                    <ArtistName>{song.artist}</ArtistName>
+                    <CardMeta>
+                      <DifficultyBadge $color={difficultyColor[song.difficulty]}>
+                        ◆ {difficultyLabel[song.difficulty]}
+                      </DifficultyBadge>
+                      <LineCount>{song.lyricLineCount}줄</LineCount>
+                    </CardMeta>
+                  </SongPlayButton>
+                  {song.creator.id === user?.id && (
+                    <DeleteButton type="button" disabled={deletingSongId === song.id} onClick={() => handleDelete(song)}>
+                      {deletingSongId === song.id ? '삭제 중...' : '내 곡 삭제'}
+                    </DeleteButton>
+                  )}
                 </SongCard>
               ))}
             </CardGrid>
@@ -307,11 +330,17 @@ const CardGrid = styled.div`
   @media (max-width: 540px) { grid-template-columns: 1fr; }
 `;
 
-const SongCard = styled.button`
-  text-align: left; padding: 16px; border: 1px solid ${({ theme }) => theme.colors.dividerSoft};
+const SongCard = styled.article`
+  position: relative; padding: 16px; border: 1px solid ${({ theme }) => theme.colors.dividerSoft};
   border-radius: 16px; background: ${({ theme }) => theme.colors.surfaceCard};
   transition: transform .2s ease, box-shadow .2s ease;
   &:hover { transform: translateY(-3px); box-shadow: 0 10px 20px rgba(0,0,0,.06); }
+`;
+const SongPlayButton = styled.button`display: block; width: 100%; text-align: left;`;
+const DeleteButton = styled.button`
+  position: absolute; top: 23px; right: 23px; z-index: 2; padding: 7px 10px;
+  border-radius: 999px; background: rgba(15,23,42,.82); color: #fff; font-size: 11px; font-weight: 700;
+  &:disabled { opacity: .6; cursor: wait; }
 `;
 const CoverWrapper = styled.div`aspect-ratio: 16 / 9; overflow: hidden; border-radius: 11px; margin-bottom: 15px; background: #eef2f7;`;
 const CoverImg = styled.img`width: 100%; height: 100%; object-fit: cover;`;

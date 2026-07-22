@@ -181,4 +181,7 @@ export const songApi = {
   publish: (songId: string) => apiRequest<SongDetail>(`/songs/drafts/${songId}/publish`, {
     method: 'POST',
   }),
+  deleteSong: (songId: string) => apiRequest<void>(`/songs/${songId}`, {
+    method: 'DELETE',
+  }),
 };
